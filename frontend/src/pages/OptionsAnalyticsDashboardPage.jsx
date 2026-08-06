@@ -1351,7 +1351,7 @@ export default function OptionsAnalyticsDashboardPage() {
               </Box>
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card>
+                  <Card sx={{ height: '100%' }}>
                     <CardContent>
                       <Typography color="textSecondary">🎯 Max Pain Price</Typography>
                       <Typography variant="h6">
@@ -1369,7 +1369,7 @@ export default function OptionsAnalyticsDashboardPage() {
                   </Card>
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card>
+                  <Card sx={{ height: '100%' }}>
                     <CardContent>
                       <Typography color="textSecondary">📏 Distance from Max Pain</Typography>
                       <Typography variant="h6">
@@ -1389,7 +1389,7 @@ export default function OptionsAnalyticsDashboardPage() {
                   </Card>
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card>
+                  <Card sx={{ height: '100%' }}>
                     <CardContent>
                       <Typography color="textSecondary">📈 Call Positions (Call OI)</Typography>
                       <Typography variant="h6">
@@ -1407,7 +1407,7 @@ export default function OptionsAnalyticsDashboardPage() {
                   </Card>
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card>
+                  <Card sx={{ height: '100%' }}>
                     <CardContent>
                       <Typography color="textSecondary">📉 Put Positions (Put OI)</Typography>
                       <Typography variant="h6">
