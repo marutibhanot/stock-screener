@@ -190,6 +190,16 @@ def _rank_gamma_flip_proximity(rows: List[GexSnapshot]) -> Dict[str, Any]:
         distance = r.distance_to_flip_pct if r.distance_to_flip_pct is not None else _pct_distance(r.spot_price, r.flip_level)
         if distance is None:
             continue
+        # Belt-and-braces alongside flip_is_crossing: even a genuine
+        # crossing can coincidentally land exactly on spot (e.g. a strike
+        # at a round price that also happens to be today's exact last
+        # trade) -- statistically implausible as a real "distance", and a
+        # sort-by-smallest-|distance| ranking would otherwise always put
+        # that fluke first. Confirmed live: 1/1153 crossing=true rows on
+        # 2026-08-06, not the systemic pattern the crossing flag already
+        # fixed, just a residual single-row edge case worth still guarding.
+        if distance == 0:
+            continue
         all_candidates.append((abs(distance), r, distance))
     all_candidates.sort(key=lambda t: t[0])
 
