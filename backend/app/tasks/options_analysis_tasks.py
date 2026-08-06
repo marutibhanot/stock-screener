@@ -20,8 +20,10 @@ from ..services.options_metrics import (
     compute_key_gamma_levels,
     compute_options_metrics,
     find_current_atm_iv_from_chain,
+    find_unusual_volume,
     _bs_gamma_delta,
     _bs_vanna_charm,
+    _compute_historical_volatility,
     _time_to_expiry_years,
     _update_iv_history_and_get_range,
 )
@@ -207,12 +209,17 @@ def analyze_options_exposure(self, symbol: str) -> Dict[str, Any]:
         if not expirations:
             raise ValueError(f"No options data available for {symbol}")
         
-        # Get spot price
-        hist = ticker.history(period="1d")
+        # 1mo (not 1d) so the same call also feeds historical_volatility below
+        # -- calculate_options_metrics (the live_full path) computes HV from
+        # a 1mo/1d history fetch too (see _compute_historical_volatility);
+        # reusing that here means VRP is derivable from a batch_abbreviated
+        # row without a second, separate price-history call per symbol.
+        hist = ticker.history(period="1mo")
         if hist.empty:
             raise ValueError(f"No market data found for {symbol}")
         spot_price = float(hist["Close"].iloc[-1])
-        
+        historical_volatility = _compute_historical_volatility(hist)
+
         # Fetch next 3 expirations. yfinance option chains don't reliably include
         # a `gamma` column, so it's derived via Black-Scholes from strike + IV +
         # time-to-expiry (see services/options_metrics.py::_bs_gamma_delta) instead
@@ -221,6 +228,8 @@ def analyze_options_exposure(self, symbol: str) -> Dict[str, Any]:
         # model estimates (see _bs_vanna_charm), not market-observed values.
         all_options = []
         nearest_chain: List[Dict[str, Any]] = []
+        nearest_calls_raw: Optional[pd.DataFrame] = None
+        nearest_puts_raw: Optional[pd.DataFrame] = None
         for exp_index, exp_date in enumerate(expirations[:3]):
             try:
                 oc = ticker.option_chain(exp_date)
@@ -254,6 +263,8 @@ def analyze_options_exposure(self, symbol: str) -> Dict[str, Any]:
                         # skew, IVR-ready payload) from this same fetched chain —
                         # options_tasks.schedule_daily_update used to re-fetch this
                         # independently, doubling yfinance calls for every symbol.
+                        df_source['lastPrice'] = pd.to_numeric(df_source.get('lastPrice', 0.0), errors='coerce').fillna(0.0)
+                        df_source['volume'] = pd.to_numeric(df_source.get('volume', 0), errors='coerce').fillna(0).astype(int)
                         for _, row in df_source.iterrows():
                             nearest_chain.append({
                                 "strike": float(row["strike"]),
@@ -263,8 +274,17 @@ def analyze_options_exposure(self, symbol: str) -> Dict[str, Any]:
                                 "vanna": float(row["vanna"]),
                                 "charm": float(row["charm"]),
                                 "open_interest": int(row["openInterest"]),
+                                "last_price": float(row["lastPrice"]),
+                                "volume": int(row["volume"]),
                                 "iv": float(row["impliedVolatility"]) if row["impliedVolatility"] > 0 else None,
                             })
+                        # Unfiltered (not yet reduced to openInterest > 0 below) --
+                        # find_unusual_volume needs the full nearest-expiration
+                        # chain, same as calculate_options_metrics' call to it.
+                        if option_type == 'call':
+                            nearest_calls_raw = df_source
+                        else:
+                            nearest_puts_raw = df_source
 
                     df_source = df_source[df_source['openInterest'] > 0]
                     if df_source.empty:
@@ -406,6 +426,26 @@ def analyze_options_exposure(self, symbol: str) -> Dict[str, Any]:
                 redis_client = get_redis_client()
                 redis_client.set(f"options_metrics:{symbol}", json.dumps(metrics), ex=7 * 24 * 3600)
 
+                # Derived from the same nearest-expiration chain already in
+                # memory -- no additional yfinance calls. These feed the
+                # Command Center's VRP/Net Premium/Unusual Volume rankings,
+                # which previously had no batch_abbreviated data at all since
+                # nothing computed or persisted them.
+                total_call_oi = sum(c["open_interest"] for c in nearest_chain if c["type"] == "call")
+                total_put_oi = sum(c["open_interest"] for c in nearest_chain if c["type"] == "put")
+                call_premium_notional = sum(
+                    c["last_price"] * c["open_interest"] * 100 for c in nearest_chain if c["type"] == "call"
+                )
+                put_premium_notional = sum(
+                    c["last_price"] * c["open_interest"] * 100 for c in nearest_chain if c["type"] == "put"
+                )
+                volatility_risk_premium = (
+                    current_atm_iv - historical_volatility
+                    if current_atm_iv is not None and historical_volatility is not None
+                    else None
+                )
+                unusual_volume = find_unusual_volume(nearest_calls_raw, nearest_puts_raw)
+
                 # Durable history alongside the 7-day Redis cache. This is the
                 # "batch_abbreviated" write path (see OptionsMetricsSnapshot's
                 # docstring) -- only what's derivable from the chain already
@@ -449,6 +489,14 @@ def analyze_options_exposure(self, symbol: str) -> Dict[str, Any]:
                                     "net_cex": net.get("net_cex"),
                                     "ivr": metrics.get("ivr"),
                                     "skew": metrics.get("skew"),
+                                    "current_atm_iv": current_atm_iv,
+                                    "historical_volatility": historical_volatility,
+                                    "volatility_risk_premium": volatility_risk_premium,
+                                    "total_call_oi": total_call_oi,
+                                    "total_put_oi": total_put_oi,
+                                    "call_premium_notional": call_premium_notional,
+                                    "put_premium_notional": put_premium_notional,
+                                    "unusual_volume_json": unusual_volume,
                                     "greeks_methodology": metrics.get("greeks_methodology"),
                                     "strikes_json": metrics.get("strikes"),
                                     "fetched_at": fetched_at,
