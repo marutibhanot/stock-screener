@@ -100,12 +100,23 @@ def parse_gex_output(json_path: str, batch_id: str, db) -> dict:
         status = row.get("status", "FAILED")
         distance = _safe_float(row.get("distance_to_flip_pct"))
         total_gex = _safe_float(row.get("total_gex"))
+        # See gex_batch.py::_infer_flip_level -- False/missing means
+        # flip_level is the "nearest single-strike GEX" fallback (no real
+        # zero-gamma crossing found), not a genuine flip level. It's still
+        # persisted for wall/GEX-only consumers, but the batch summary's
+        # closest_to_flip below -- and the Command Center's Gamma Flip
+        # Proximity ranking -- must not treat it as one.
+        flip_is_crossing = bool(row.get("flip_is_crossing"))
 
         if status == "OK":
             tickers_ok += 1
             if total_gex is not None:
                 gex_values.append(total_gex)
-            if distance is not None and (closest_distance is None or abs(distance) < abs(closest_distance)):
+            if (
+                flip_is_crossing
+                and distance is not None
+                and (closest_distance is None or abs(distance) < abs(closest_distance))
+            ):
                 closest_distance = distance
                 closest_to_flip = row.get("symbol")
         else:
@@ -133,6 +144,7 @@ def parse_gex_output(json_path: str, batch_id: str, db) -> dict:
                 "put_gex": put_gex,
                 "total_gex": total_gex,
                 "flip_level": _safe_float(row.get("flip_level")),
+                "flip_is_crossing": flip_is_crossing,
                 "distance_to_flip_pct": distance,
                 "fetched_at": fetched_at,
                 "batch_id": batch_id,

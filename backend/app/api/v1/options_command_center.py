@@ -152,11 +152,13 @@ def _rank_volatility_acceleration(rows: List[GexSnapshot]) -> List[Dict[str, Any
             r.ticker,
             price=r.spot_price,
             totalGex=r.total_gex,
-            distanceToFlipPct=(
-                r.distance_to_flip_pct
-                if r.distance_to_flip_pct is not None
-                else _pct_distance(r.spot_price, r.flip_level)
-            ),
+            # Only a genuine zero-gamma crossing is shown -- see
+            # _rank_gamma_flip_proximity's docstring. The fallback flip
+            # level is real enough for wall/GEX display elsewhere, but
+            # displaying it as a "distance to flip" here would be
+            # misleading (it's not a real distance, just proximity to
+            # spot by construction).
+            distanceToFlipPct=(_pct_distance(r.spot_price, r.flip_level) if r.flip_is_crossing else None),
             regime="short_gamma" if r.total_gex < 0 else "long_gamma",
         )
         for r in eligible[:_TOP_N]
@@ -169,26 +171,24 @@ def _rank_gamma_flip_proximity(rows: List[GexSnapshot]) -> Dict[str, Any]:
     can legitimately come back empty on a quiet day -- rather than showing
     a bare "no matches" table, widen to the _FLIP_PROXIMITY_FALLBACK_N (3)
     closest tickers regardless of distance, flagged via `widened` so the
-    frontend can label it as an outside-threshold fallback."""
+    frontend can label it as an outside-threshold fallback.
+
+    Only considers rows with a genuine zero-gamma crossing (flip_is_crossing
+    -- see gex_batch.py::_infer_flip_level and GexSnapshot's docstring).
+    Live-diagnosed on 2026-08-06: the pre-crossing-flag fallback ("nearest
+    single-strike GEX" on thin/illiquid chains with no real crossing) is
+    *always* close to spot by construction -- the candidate strikes were
+    already restricted to a narrow band around spot -- so on days with many
+    thin-chain rows, this ranking was almost entirely fallback noise
+    manufacturing the appearance of "trading right at the flip," crowding
+    out every genuine near-flip candidate.
+    """
     all_candidates = []
     for r in rows:
-        distance = (
-            r.distance_to_flip_pct
-            if r.distance_to_flip_pct is not None
-            else _pct_distance(r.spot_price, r.flip_level)
-        )
-        if distance is None:
+        if not r.flip_is_crossing:
             continue
-        # Live-diagnosed on 2026-08-06: a small (~0.2%, ~11/4649 that day),
-        # persistent slice of GexSnapshot rows have spot_price landing on
-        # flip_level to exact float precision -- a degenerate key-level
-        # solver fallback for sparse/illiquid chains, not a real "trading
-        # exactly at the flip" reading (a continuous spot price essentially
-        # never lands on a discrete strike to full precision). Since this
-        # ranking sorts by smallest |distance|, that tiny buggy slice
-        # otherwise always wins the top slots outright, crowding out every
-        # genuine near-flip candidate.
-        if distance == 0:
+        distance = r.distance_to_flip_pct if r.distance_to_flip_pct is not None else _pct_distance(r.spot_price, r.flip_level)
+        if distance is None:
             continue
         all_candidates.append((abs(distance), r, distance))
     all_candidates.sort(key=lambda t: t[0])

@@ -129,20 +129,38 @@ def _bs_gamma(spot: float, strike: float, time_years: float, vol: float) -> floa
     return _norm_pdf(d1) / (spot * vol * math.sqrt(time_years))
 
 
-def _infer_flip_level(gex_by_strike: list[tuple[float, float]]) -> float | None:
+def _infer_flip_level(gex_by_strike: list[tuple[float, float]]) -> tuple[float | None, bool]:
+    """Returns (flip_level, is_crossing).
+
+    is_crossing is True only when cumulative GEX actually changes sign
+    somewhere across the strike ladder -- a genuine zero-gamma crossing.
+    When it never does (common for thin/illiquid chains with only a
+    handful of OI>0 strikes), the old behavior fell back to "the single
+    strike with the smallest per-strike GEX" and returned it exactly like
+    a real flip level. That fallback is not a flip level at all: the
+    candidate strikes it picks from were already restricted to a narrow
+    band around spot price (see fetch_one's `lo`/`hi` strike-range filter),
+    so the fallback result is *always* close to spot regardless of any
+    real market signal -- manufacturing the appearance of "trading right at
+    the flip" for names where no flip could actually be computed. Callers
+    must check is_crossing before trusting flip_level for anything
+    proximity-based (e.g. Gamma Flip Proximity); it's still returned (not
+    None) so wall/GEX-only consumers that don't care about crossing
+    semantics keep their previous best-effort value.
+    """
     if not gex_by_strike:
-        return None
+        return None, False
 
     cumulative = 0.0
     previous = None
     for strike, gex in sorted(gex_by_strike, key=lambda item: item[0]):
         cumulative += gex
         if previous is not None and previous != 0 and ((previous < 0 <= cumulative) or (previous > 0 >= cumulative)):
-            return strike
+            return strike, True
         previous = cumulative
 
     nearest = min(gex_by_strike, key=lambda item: abs(item[1]))
-    return nearest[0]
+    return nearest[0], False
 
 
 def fetch_one(symbol_cfg: dict, strike_range_pct: float, max_strikes: int | None,
@@ -244,7 +262,7 @@ def fetch_one(symbol_cfg: dict, strike_range_pct: float, max_strikes: int | None
         by_strike[strike] = by_strike.get(strike, 0.0) + gex
 
     total_gex = call_gex_total + put_gex_total
-    flip_level = _infer_flip_level(list(by_strike.items()))
+    flip_level, flip_is_crossing = _infer_flip_level(list(by_strike.items()))
     distance_pct = None
     if flip_level not in (None, 0):
         distance_pct = ((spot - flip_level) / flip_level) * 100.0
@@ -269,6 +287,7 @@ def fetch_one(symbol_cfg: dict, strike_range_pct: float, max_strikes: int | None
         "put_gex": put_gex_total,
         "total_gex": total_gex,
         "flip_level": flip_level,
+        "flip_is_crossing": flip_is_crossing,
         "distance_to_flip_pct": distance_pct,
         "fetched_at": datetime.utcnow().isoformat(),
     }

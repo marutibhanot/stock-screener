@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Column, Date, DateTime, Float, Index, Integer, String
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, Index, Integer, String
 
 from ..database import Base
 
@@ -27,6 +27,14 @@ class GexSnapshot(Base):
     total_gex = Column(Float, nullable=True)
     flip_level = Column(Float, nullable=True)
     distance_to_flip_pct = Column(Float, nullable=True)
+    # True only when flip_level came from a genuine cumulative-GEX sign
+    # crossing (see gex_batch.py::_infer_flip_level). NULL/False means it's
+    # the "nearest single-strike GEX" fallback used on thin/illiquid
+    # chains with no real crossing -- not a genuine flip level, and always
+    # close to spot by construction (the candidate strikes were already
+    # restricted to a narrow band around spot), so it must not be trusted
+    # for anything proximity-based even though it's numerically present.
+    flip_is_crossing = Column(Boolean, nullable=True)
 
     fetched_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     # US/Eastern trading day this snapshot belongs to (derived from fetched_at
