@@ -3,9 +3,11 @@
 // MUI-based pages elsewhere in the app).
 import '../styles/commandCenter.css';
 
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
 import MacroHealthTopBar from '../components/CommandCenter/MacroHealthTopBar';
+import UniversalFilterBar from '../components/CommandCenter/UniversalFilterBar';
 import CommandGrid from '../components/CommandCenter/CommandGrid';
 import ExecutiveAlertTicker from '../components/CommandCenter/ExecutiveAlertTicker';
 import { getOptionsCommandCenterSnapshot } from '../api/optionsCommandCenter';
@@ -18,9 +20,12 @@ import { getOptionsCommandCenterSnapshot } from '../api/optionsCommandCenter';
  * short or empty while the snapshot table is still building up history).
  */
 export default function OptionsCommandCenterPage() {
+  const [universe, setUniverse] = useState('all');
+  const [cap, setCap] = useState('all');
+
   const { data, isLoading, isError, error, dataUpdatedAt } = useQuery({
-    queryKey: ['optionsCommandCenter'],
-    queryFn: getOptionsCommandCenterSnapshot,
+    queryKey: ['optionsCommandCenter', universe, cap],
+    queryFn: () => getOptionsCommandCenterSnapshot({ universe, cap }),
     staleTime: 30_000,
     refetchInterval: 60_000,
   });
@@ -28,6 +33,7 @@ export default function OptionsCommandCenterPage() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-300">
       <MacroHealthTopBar macro={data?.macro} />
+      <UniversalFilterBar universe={universe} cap={cap} onUniverseChange={setUniverse} onCapChange={setCap} />
       <ExecutiveAlertTicker alerts={data?.alerts ?? []} />
 
       {isLoading && (

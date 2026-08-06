@@ -33,7 +33,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from ...database import get_db
@@ -77,7 +77,28 @@ def _is_degenerate_snapshot(row: OptionsMetricsSnapshot) -> bool:
     return row.total_call_oi == 0 and row.total_put_oi == 0
 
 
-def _latest_snapshots_for_active_universe(db: Session) -> List[OptionsMetricsSnapshot]:
+_CAP_THRESHOLDS = {"mega": 100_000_000_000, "large": 10_000_000_000}
+
+
+def _apply_universe_filters(query, universe: str, cap: str):
+    """Shared Universal Filter Bar logic for both snapshot-fetching
+    functions below. `universe` distinguishes real equities from ETFs/index
+    funds via StockUniverse.industry == 'Exchange Traded Fund' (the
+    existing convention this app's universe data already uses -- ETFs also
+    have a NULL market_cap, consistent with not being a company). `cap`
+    thresholds against StockUniverse.market_cap. Unrecognized values pass
+    through unfiltered rather than erroring -- the API layer validates the
+    allowed set before calling this."""
+    if universe == "equities":
+        query = query.filter(StockUniverse.industry != "Exchange Traded Fund")
+    elif universe == "etf":
+        query = query.filter(StockUniverse.industry == "Exchange Traded Fund")
+    if cap in _CAP_THRESHOLDS:
+        query = query.filter(StockUniverse.market_cap >= _CAP_THRESHOLDS[cap])
+    return query
+
+
+def _latest_snapshots_for_active_universe(db: Session, universe: str, cap: str) -> List[OptionsMetricsSnapshot]:
     """One row per active US-market ticker: whichever `batch_abbreviated`
     snapshot is most recent for that ticker -- i.e. only rows produced by an
     actual systematic sweep (analyze_options_exposure, scheduled or manually
@@ -107,13 +128,15 @@ def _latest_snapshots_for_active_universe(db: Session) -> List[OptionsMetricsSna
             StockUniverse.market == "US",
             OptionsMetricsSnapshot.source == "batch_abbreviated",
         )
-        .distinct(OptionsMetricsSnapshot.ticker)
-        .order_by(OptionsMetricsSnapshot.ticker, OptionsMetricsSnapshot.fetched_at.desc())
+    )
+    subq = _apply_universe_filters(subq, universe, cap)
+    subq = subq.distinct(OptionsMetricsSnapshot.ticker).order_by(
+        OptionsMetricsSnapshot.ticker, OptionsMetricsSnapshot.fetched_at.desc()
     )
     return [r for r in subq.all() if not _is_degenerate_snapshot(r)]
 
 
-def _latest_gex_snapshots_for_active_universe(db: Session) -> List[GexSnapshot]:
+def _latest_gex_snapshots_for_active_universe(db: Session, universe: str, cap: str) -> List[GexSnapshot]:
     """One row per active US-market ticker: latest OK GexSnapshot from the
     existing daily max-pain -> GEX -> options pipeline (see module
     docstring) -- ~10k tickers' worth of real total_gex/flip-level data,
@@ -123,9 +146,9 @@ def _latest_gex_snapshots_for_active_universe(db: Session) -> List[GexSnapshot]:
         db.query(GexSnapshot)
         .join(StockUniverse, StockUniverse.symbol == GexSnapshot.ticker)
         .filter(StockUniverse.active_filter(), StockUniverse.market == "US", GexSnapshot.status == "OK")
-        .distinct(GexSnapshot.ticker)
-        .order_by(GexSnapshot.ticker, GexSnapshot.fetched_at.desc())
     )
+    subq = _apply_universe_filters(subq, universe, cap)
+    subq = subq.distinct(GexSnapshot.ticker).order_by(GexSnapshot.ticker, GexSnapshot.fetched_at.desc())
     return subq.all()
 
 
@@ -246,6 +269,53 @@ def _rank_extreme_skew(rows: List[OptionsMetricsSnapshot]) -> List[Dict[str, Any
     return [_symbol_row(r.ticker, skew=r.skew) for r in eligible[:_TOP_N]]
 
 
+_MIN_SECTOR_SAMPLE = 3
+
+
+def _rank_sector_skew_dispersion(db: Session, rows: List[OptionsMetricsSnapshot]) -> List[Dict[str, Any]]:
+    """Tickers whose 25-delta skew deviates most from their own sector's
+    mean skew -- a relative-value view (unusually call-skewed or
+    put-skewed versus peers), distinct from _rank_extreme_skew's absolute
+    ranking. Sector comes from StockUniverse.sector (already populated for
+    stock screening elsewhere in this app -- no new data source). A
+    sector's mean is only computed once at least _MIN_SECTOR_SAMPLE tickers
+    in it have skew data; smaller samples are excluded rather than treated
+    as a meaningful mean.
+    """
+    eligible = [r for r in rows if r.skew is not None]
+    if not eligible:
+        return []
+
+    tickers = [r.ticker for r in eligible]
+    sector_by_ticker = dict(
+        db.query(StockUniverse.symbol, StockUniverse.sector)
+        .filter(StockUniverse.symbol.in_(tickers))
+        .all()
+    )
+
+    by_sector: Dict[str, List[float]] = {}
+    for r in eligible:
+        sector = sector_by_ticker.get(r.ticker)
+        if sector:
+            by_sector.setdefault(sector, []).append(r.skew)
+
+    sector_mean = {s: sum(v) / len(v) for s, v in by_sector.items() if len(v) >= _MIN_SECTOR_SAMPLE}
+
+    dispersions = []
+    for r in eligible:
+        sector = sector_by_ticker.get(r.ticker)
+        mean = sector_mean.get(sector)
+        if mean is None:
+            continue
+        dispersions.append((r.ticker, r.skew, sector, mean, r.skew - mean))
+
+    dispersions.sort(key=lambda t: abs(t[4]), reverse=True)
+    return [
+        _symbol_row(ticker, skew=skew, sector=sector, sectorMeanSkew=round(mean, 3), deviation=round(dev, 3))
+        for ticker, skew, sector, mean, dev in dispersions[:_TOP_N]
+    ]
+
+
 def _rank_net_premium_inflows(rows: List[OptionsMetricsSnapshot]) -> List[Dict[str, Any]]:
     eligible = [r for r in rows if r.call_premium_notional is not None and r.put_premium_notional is not None]
     eligible.sort(key=lambda r: (r.call_premium_notional - r.put_premium_notional), reverse=True)
@@ -255,6 +325,52 @@ def _rank_net_premium_inflows(rows: List[OptionsMetricsSnapshot]) -> List[Dict[s
             callPremium=r.call_premium_notional,
             putPremium=r.put_premium_notional,
             netPremium=round(r.call_premium_notional - r.put_premium_notional, 2),
+        )
+        for r in eligible[:_TOP_N]
+    ]
+
+
+def _rank_delta_weighted_flow(rows: List[OptionsMetricsSnapshot]) -> List[Dict[str, Any]]:
+    """Tickers with the largest net delta-weighted dollar flow (spot * delta
+    * volume * 100, signed by option type and summed across the nearest
+    expiration's whole chain) -- a directional-bias view distinct from
+    _rank_net_premium_inflows' raw dollar volume: a ticker can have huge
+    call premium traded but still net bearish here if that volume sits in
+    low-delta (far OTM) contracts."""
+    eligible = [r for r in rows if r.net_delta_dollar_flow is not None]
+    eligible.sort(key=lambda r: abs(r.net_delta_dollar_flow), reverse=True)
+    return [
+        _symbol_row(
+            r.ticker,
+            price=r.underlying_price,
+            netDeltaDollarFlow=r.net_delta_dollar_flow,
+            bias="bullish" if r.net_delta_dollar_flow > 0 else "bearish",
+        )
+        for r in eligible[:_TOP_N]
+    ]
+
+
+def _rank_term_structure_inversion(rows: List[OptionsMetricsSnapshot]) -> List[Dict[str, Any]]:
+    """Tickers where the nearest listed expiration is pricing MORE vol than
+    the next one (ratio > 1.0) -- backwardation, usually a sign of
+    near-term event risk (earnings, binary catalyst) priced into the front
+    contract. Deliberately not framed as "7D/30D": next_expiration is
+    whatever yfinance's next listed expiration actually is for that
+    ticker (varies), not a fixed constant-maturity point -- see
+    OptionsMetricsSnapshot's term_structure_ratio docstring."""
+    eligible = [
+        r for r in rows
+        if r.term_structure_ratio is not None and r.term_structure_ratio > 1.0
+    ]
+    eligible.sort(key=lambda r: r.term_structure_ratio, reverse=True)
+    return [
+        _symbol_row(
+            r.ticker,
+            nearIv=r.current_atm_iv,
+            nextIv=r.next_expiration_atm_iv,
+            ratio=round(r.term_structure_ratio, 3),
+            nearExpiration=r.expiration.isoformat() if r.expiration else None,
+            nextExpiration=r.next_expiration.isoformat() if r.next_expiration else None,
         )
         for r in eligible[:_TOP_N]
     ]
@@ -508,12 +624,29 @@ def _macro_index(db: Session, row: Optional[OptionsMetricsSnapshot], symbol: str
     return _fetch_live_macro_index(db, symbol)
 
 
+_ALLOWED_UNIVERSE = {"all", "equities", "etf"}
+_ALLOWED_CAP = {"all", "mega", "large"}
+
+
 @router.get("/")
-def get_command_center_snapshot(db: Session = Depends(get_db)) -> Dict[str, Any]:
+def get_command_center_snapshot(
+    db: Session = Depends(get_db),
+    universe: str = Query("all", description="all | equities | etf"),
+    cap: str = Query("all", description="all | mega | large"),
+) -> Dict[str, Any]:
     """Everything the Options Command Center page needs in one call: macro
-    SPY/QQQ levels, the six ranking tables, and generated alerts. All
-    derived from persisted OptionsMetricsSnapshot rows -- see module
+    SPY/QQQ levels, the ranking tables, and generated alerts. All derived
+    from persisted OptionsMetricsSnapshot/GexSnapshot rows -- see module
     docstring for why this can legitimately return sparse/empty lists.
+
+    `universe`/`cap` are the Universal Filter Bar: applied to every ranking
+    table (not the macro bar, which is always just SPY/QQQ) before that
+    table's top-N is selected, not after -- filtering an already-selected
+    top 10 down to "mega cap only" would usually leave almost nothing, since
+    most of the universe isn't mega cap. No liquidity/volume filter yet:
+    that needs a join to stock_prices this endpoint doesn't otherwise make,
+    left as a follow-up rather than adding that cost to every table for a
+    filter nobody asked to use yet.
 
     Note: there is no genuine $SPX gamma-regime figure here -- SPX index
     options aren't tracked separately, so SPY's own regime is used as a
@@ -522,8 +655,13 @@ def get_command_center_snapshot(db: Session = Depends(get_db)) -> Dict[str, Any]
     (see MarketExposure.vix, a single spot value only), so there is nothing
     real to report.
     """
-    rows = _latest_snapshots_for_active_universe(db)
-    gex_rows = _latest_gex_snapshots_for_active_universe(db)
+    if universe not in _ALLOWED_UNIVERSE:
+        raise HTTPException(status_code=400, detail=f"Invalid universe '{universe}'. Expected one of: {', '.join(sorted(_ALLOWED_UNIVERSE))}.")
+    if cap not in _ALLOWED_CAP:
+        raise HTTPException(status_code=400, detail=f"Invalid cap '{cap}'. Expected one of: {', '.join(sorted(_ALLOWED_CAP))}.")
+
+    rows = _latest_snapshots_for_active_universe(db, universe, cap)
+    gex_rows = _latest_gex_snapshots_for_active_universe(db, universe, cap)
     by_ticker = {r.ticker: r for r in rows}
     gex_by_ticker = {r.ticker: r for r in gex_rows}
 
@@ -554,7 +692,10 @@ def get_command_center_snapshot(db: Session = Depends(get_db)) -> Dict[str, Any]
         "richVrp": _rank_vrp(rows, rich=True),
         "cheapVrp": _rank_vrp(rows, rich=False),
         "extremeSkew": _rank_extreme_skew(rows),
+        "sectorSkewDispersion": _rank_sector_skew_dispersion(db, rows),
+        "termStructureInversion": _rank_term_structure_inversion(rows),
         "netPremiumInflows": _rank_net_premium_inflows(rows),
+        "deltaWeightedFlow": _rank_delta_weighted_flow(rows),
         "unusualVolumeOi": _rank_unusual_volume_oi(rows),
         "alerts": _generate_alerts(rows),
         "coverage": {

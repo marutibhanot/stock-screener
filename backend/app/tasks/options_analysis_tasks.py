@@ -23,7 +23,9 @@ from ..services.options_metrics import (
     find_unusual_volume,
     _bs_gamma_delta,
     _bs_vanna_charm,
+    _chain_iv_is_degenerate,
     _compute_historical_volatility,
+    _find_valid_atm_option,
     _time_to_expiry_years,
     _update_iv_history_and_get_range,
 )
@@ -230,6 +232,17 @@ def analyze_options_exposure(self, symbol: str) -> Dict[str, Any]:
         nearest_chain: List[Dict[str, Any]] = []
         nearest_calls_raw: Optional[pd.DataFrame] = None
         nearest_puts_raw: Optional[pd.DataFrame] = None
+        # Term structure needs a second constant-maturity IV reading besides
+        # the nearest expiration -- captured from the *next* listed
+        # expiration (exp_index == 1), already being fetched here for GEX
+        # purposes, so this costs no extra yfinance calls. Deliberately not
+        # labeled "30D": the next listed expiration is whatever yfinance
+        # actually has (varies per ticker, often days away for weeklies),
+        # not a real 30-day constant-maturity point -- claiming that
+        # precision would be worse than not having the feature.
+        next_expiration_date: Optional[str] = None
+        next_calls_raw: Optional[pd.DataFrame] = None
+        next_puts_raw: Optional[pd.DataFrame] = None
         for exp_index, exp_date in enumerate(expirations[:3]):
             try:
                 oc = ticker.option_chain(exp_date)
@@ -285,6 +298,12 @@ def analyze_options_exposure(self, symbol: str) -> Dict[str, Any]:
                             nearest_calls_raw = df_source
                         else:
                             nearest_puts_raw = df_source
+                    elif exp_index == 1:
+                        next_expiration_date = exp_date
+                        if option_type == 'call':
+                            next_calls_raw = df_source
+                        else:
+                            next_puts_raw = df_source
 
                     df_source = df_source[df_source['openInterest'] > 0]
                     if df_source.empty:
@@ -296,6 +315,24 @@ def analyze_options_exposure(self, symbol: str) -> Dict[str, Any]:
 
         if not all_options:
             raise ValueError(f"No options with OI found for {symbol}")
+
+        # Next-listed-expiration ATM IV for term structure -- same
+        # degenerate-chain guard as the nearest-expiration IV below (see
+        # _chain_iv_is_degenerate's docstring for why a floor alone isn't
+        # enough). None (not persisted) rather than a fabricated ratio when
+        # unavailable or untrustworthy.
+        next_expiration_atm_iv: Optional[float] = None
+        if next_calls_raw is not None or next_puts_raw is not None:
+            next_all_ivs = []
+            for side in (next_calls_raw, next_puts_raw):
+                if side is not None and 'impliedVolatility' in side.columns:
+                    next_all_ivs.extend(side['impliedVolatility'].tolist())
+            if not _chain_iv_is_degenerate(next_all_ivs):
+                next_atm_row = _find_valid_atm_option(next_calls_raw, spot_price) if next_calls_raw is not None else None
+                if next_atm_row is None and next_puts_raw is not None:
+                    next_atm_row = _find_valid_atm_option(next_puts_raw, spot_price)
+                if next_atm_row is not None:
+                    next_expiration_atm_iv = float(next_atm_row['impliedVolatility'])
 
         df = pd.concat(all_options, ignore_index=True)
 
@@ -445,6 +482,20 @@ def analyze_options_exposure(self, symbol: str) -> Dict[str, Any]:
                     else None
                 )
                 unusual_volume = find_unusual_volume(nearest_calls_raw, nearest_puts_raw)
+                # Net delta-weighted dollar flow: spot * delta * volume * 100,
+                # summed across every contract. delta is already signed by
+                # _bs_gamma_delta (calls in [0, 1], puts in [-1, 0]), so calls
+                # and puts net against each other directly -- positive means
+                # today's volume skews toward bullish (call-heavy) delta
+                # exposure, negative toward bearish.
+                net_delta_dollar_flow = sum(
+                    spot_price * c["delta"] * c["volume"] * 100 for c in nearest_chain
+                )
+                term_structure_ratio = (
+                    current_atm_iv / next_expiration_atm_iv
+                    if current_atm_iv is not None and next_expiration_atm_iv not in (None, 0)
+                    else None
+                )
 
                 # Durable history alongside the 7-day Redis cache. This is the
                 # "batch_abbreviated" write path (see OptionsMetricsSnapshot's
@@ -497,6 +548,10 @@ def analyze_options_exposure(self, symbol: str) -> Dict[str, Any]:
                                     "call_premium_notional": call_premium_notional,
                                     "put_premium_notional": put_premium_notional,
                                     "unusual_volume_json": unusual_volume,
+                                    "net_delta_dollar_flow": net_delta_dollar_flow,
+                                    "next_expiration": _parse_expiration_date(next_expiration_date),
+                                    "next_expiration_atm_iv": next_expiration_atm_iv,
+                                    "term_structure_ratio": term_structure_ratio,
                                     "greeks_methodology": metrics.get("greeks_methodology"),
                                     "strikes_json": metrics.get("strikes"),
                                     "fetched_at": fetched_at,
