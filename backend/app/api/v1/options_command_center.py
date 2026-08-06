@@ -282,6 +282,57 @@ def _rank_unusual_volume_oi(rows: List[OptionsMetricsSnapshot]) -> List[Dict[str
     return contracts[:_TOP_N]
 
 
+def _rank_wall_breakers(rows: List[OptionsMetricsSnapshot]) -> List[Dict[str, Any]]:
+    """Tickers currently trading through a structural wall -- above the call
+    wall (squeeze: resistance no longer holding) or below the put wall
+    (liquidation: support no longer holding). Same breach condition
+    _generate_alerts already uses for its wall-breach alert, surfaced here
+    as a proper ranked table instead of just alert text. Ranked by how far
+    price has pushed through the wall, most extreme first."""
+    breakers: List[Dict[str, Any]] = []
+    for r in rows:
+        if r.underlying_price is None:
+            continue
+        if r.call_wall is not None and r.underlying_price >= r.call_wall:
+            breakers.append({
+                "symbol": r.ticker,
+                "direction": "call_wall",
+                "price": r.underlying_price,
+                "wall": r.call_wall,
+                "distancePct": _pct_distance(r.underlying_price, r.call_wall),
+            })
+        elif r.put_wall is not None and r.underlying_price <= r.put_wall:
+            breakers.append({
+                "symbol": r.ticker,
+                "direction": "put_wall",
+                "price": r.underlying_price,
+                "wall": r.put_wall,
+                "distancePct": _pct_distance(r.underlying_price, r.put_wall),
+            })
+    breakers.sort(key=lambda b: abs(b["distancePct"] or 0), reverse=True)
+    return breakers[:_TOP_N]
+
+
+def _rank_vanna_charm_squeeze(rows: List[OptionsMetricsSnapshot]) -> List[Dict[str, Any]]:
+    """Tickers with the largest dealer Vanna/Charm exposure -- where a vol
+    move (Vanna) or the passage of time (Charm) alone would force the
+    biggest dealer delta-hedging flow, independent of any price move. Both
+    net_vex and net_cex are already computed and persisted by both the
+    live_full and batch_abbreviated write paths (see calculate_options_metrics
+    / compute_options_metrics) -- this just ranks what's already there."""
+    eligible = [r for r in rows if r.net_vex is not None and r.net_cex is not None]
+    eligible.sort(key=lambda r: abs(r.net_vex) + abs(r.net_cex), reverse=True)
+    return [
+        _symbol_row(
+            r.ticker,
+            netVex=r.net_vex,
+            netCex=r.net_cex,
+            dominant="vanna" if abs(r.net_vex) >= abs(r.net_cex) else "charm",
+        )
+        for r in eligible[:_TOP_N]
+    ]
+
+
 def _generate_alerts(rows: List[OptionsMetricsSnapshot]) -> List[Dict[str, Any]]:
     """One alert per ticker whose latest snapshot has a strong enough
     Executive Signal score, plus a dedicated wall-breach alert regardless of
@@ -498,6 +549,8 @@ def get_command_center_snapshot(db: Session = Depends(get_db)) -> Dict[str, Any]
         },
         "volatilityAcceleration": _rank_volatility_acceleration(gex_rows),
         "gammaFlipProximity": _rank_gamma_flip_proximity(gex_rows),
+        "wallBreakers": _rank_wall_breakers(rows),
+        "vannaCharmSqueeze": _rank_vanna_charm_squeeze(rows),
         "richVrp": _rank_vrp(rows, rich=True),
         "cheapVrp": _rank_vrp(rows, rich=False),
         "extremeSkew": _rank_extreme_skew(rows),
