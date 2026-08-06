@@ -21,6 +21,8 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  List,
+  ListItem,
 } from '@mui/material';
 import PrintIcon from '@mui/icons-material/Print';
 import apiClient from '../api/client';
@@ -33,17 +35,26 @@ import MetricHistoryChart from '../components/OptionsMetrics/MetricHistoryChart'
 import ExpirationSelector from '../components/OptionsMetrics/ExpirationSelector';
 import LastUpdated from '../components/OptionsMetrics/LastUpdated';
 
-// Human-readable label + one-line rationale per evaluateMarketFactors() key,
-// used only by the factor-breakdown table -- keeps that table's copy in one
-// place instead of scattered across the sentence strings in evaluateMarketFactors.
+// Human-readable label per evaluateMarketFactors() key, shared by the bullet
+// list and the factor-breakdown table so naming never drifts between them.
 const MARKET_FACTOR_LABELS = {
-  gex: { label: 'Total GEX', why: 'Dominant dealer-hedging-flow signal' },
-  skew: { label: '25Δ Volatility Skew', why: 'Put vs call IV demand' },
-  maxPain: { label: 'Max Pain Pull', why: 'Weak, contested on its own' },
-  premiumPcr: { label: 'Premium Put/Call Ratio', why: 'Dollar-weighted flow' },
-  openInterest: { label: 'Open Interest Skew', why: 'Call OI vs put OI' },
-  callWallBreak: { label: 'Call Wall Break', why: 'Resistance no longer holding' },
-  putWallBreak: { label: 'Put Wall Break', why: 'Support no longer holding' },
+  gex: 'Dealer Position (GEX)',
+  skew: 'Volatility (25Δ Volatility Skew)',
+  maxPain: 'Price vs Max Pain',
+  premiumPcr: 'Money Flow (Premium Put/Call Ratio)',
+  openInterest: 'Open Interest (OI Skew)',
+  callWallBreak: 'Price vs Call Wall',
+  putWallBreak: 'Price vs Put Wall',
+};
+
+// Signal label/emoji for a factor's vote -- "Slightly" qualifies factors
+// weighted below 1 (currently only Max Pain), since a weak/contested signal
+// shouldn't read with the same confidence as a full-weight one.
+const getFactorSignalMeta = (vote, weight) => {
+  const qualifier = weight < 1 ? 'Slightly ' : '';
+  if (vote > 0) return { label: `${qualifier}Bullish`, emoji: '🟢', color: 'success' };
+  if (vote < 0) return { label: `${qualifier}Bearish`, emoji: '🔴', color: 'error' };
+  return { label: 'Neutral', emoji: '⚪', color: 'default' };
 };
 
 /**
@@ -228,27 +239,106 @@ export default function OptionsAnalyticsDashboardPage() {
     return () => controller.abort();
   }, [selectedTicker, selectedExpiration, queryClient]);
 
-  const getGexStatus = (value) => {
+  // Plain-language read of Call/Put/Total GEX, mirrored around zero for
+  // each side -- call and put gamma pull in opposite directions (call-side
+  // positive gamma dampens upside, put-side positive gamma dampens
+  // downside), so "positive/negative" needs its own bullet list and
+  // one-line "Simple version" per side rather than a single shared label.
+  const getGexNarrative = (kind, value) => {
     if (value == null || Number.isNaN(Number(value))) return null;
     const num = Number(value);
-    if (num > 0) {
+    const sign = num > 0 ? 1 : num < 0 ? -1 : 0;
+
+    if (kind === 'total') {
+      if (sign > 0) {
+        return {
+          sign,
+          label: 'Positive Gamma',
+          emoji: '🟢',
+          checklist: [
+            { ok: true, text: 'The market is currently in a calmer environment.' },
+            { ok: true, text: 'Dealers are more likely to stabilize the price.' },
+            { ok: false, text: 'A sharp move below important levels could still create more volatility.' },
+          ],
+        };
+      }
+      if (sign < 0) {
+        return {
+          sign,
+          label: 'Negative Gamma',
+          emoji: '🔴',
+          checklist: [
+            { ok: false, text: 'The market is currently in a more fragile environment.' },
+            { ok: false, text: 'Dealers are more likely to amplify price moves rather than calm them.' },
+            { ok: true, text: 'A sharp move above important levels could help calm things down.' },
+          ],
+        };
+      }
       return {
-        label: 'Long Gamma',
-        color: 'success',
-        description: 'Positive gamma exposure; option sellers may reduce hedges on large moves.',
+        sign,
+        label: 'Neutral Gamma',
+        emoji: '⚪',
+        checklist: [
+          { ok: true, text: 'Dealer gamma exposure is roughly balanced right now.' },
+          { ok: false, text: 'Neither strong stabilizing nor destabilizing pressure is dominant.' },
+        ],
       };
     }
-    if (num < 0) {
+
+    // kind === 'call' | 'put'
+    const upside = kind === 'call';
+    if (sign > 0) {
       return {
-        label: 'Short Gamma',
-        color: 'warning',
-        description: 'Negative gamma exposure; market makers may need aggressive re-hedging.',
+        sign,
+        label: 'Positive',
+        emoji: '🟢',
+        arrow: '➡️',
+        meaning: 'Good sign for stability',
+        bullets: upside
+          ? [
+              'There are many call options where dealers are likely long gamma.',
+              'If the stock moves sharply up, dealers may sell some shares to hedge.',
+              'If the stock drops, they may buy shares back.',
+              'This usually reduces big price swings.',
+            ]
+          : [
+              'There are many put options where dealers are likely long gamma.',
+              'If the stock drops sharply, dealers may buy shares to hedge.',
+              'If the stock rises, they may sell shares back.',
+              'This usually reduces big price swings.',
+            ],
+        simple: `Dealers are likely to act like a shock absorber${upside ? '' : ' on the downside too'}.`,
+      };
+    }
+    if (sign < 0) {
+      return {
+        sign,
+        label: 'Negative',
+        emoji: '🔴',
+        arrow: '➡️',
+        meaning: `Risk of faster moves ${upside ? 'upward' : 'downward'}`,
+        bullets: upside
+          ? [
+              'Call options here are creating negative gamma exposure for dealers.',
+              'If the stock rallies, dealers may need to buy more shares to stay hedged.',
+              'This can make an upward move happen faster.',
+            ]
+          : [
+              'Put options create negative gamma exposure.',
+              'If the stock falls, dealers may need to sell more shares to protect themselves.',
+              'This can make a drop happen faster.',
+            ],
+        simple: `If the stock starts ${upside ? 'rising' : 'falling'}, dealers may add fuel to the fire.`,
       };
     }
     return {
-      label: 'Neutral Gamma',
-      color: 'info',
-      description: 'Gamma exposure is balanced and less likely to trigger large hedging flows.',
+      sign,
+      label: 'Neutral',
+      emoji: '⚪',
+      arrow: '➡️',
+      meaning: 'Not adding much either way',
+      bullets: [`${upside ? 'Call' : 'Put'}-side dealer positioning is balanced right now.`],
+      simple: 'This is not adding meaningful stabilizing or destabilizing pressure.',
     };
   };
 
@@ -258,21 +348,29 @@ export default function OptionsAnalyticsDashboardPage() {
     if (pct < -0.5) {
       return {
         label: 'Below Max Pain',
-        color: 'info',
-        description: 'Current price is below max pain; puts may be relatively expensive.',
+        emoji: '🔴',
+        color: 'error',
+        direction: `${Math.abs(pct).toFixed(2)}% below`,
+        description:
+          'The stock is trading well below Max Pain. This can sometimes lead to a small bounce toward that level before expiration, but it is not guaranteed.',
       };
     }
     if (pct > 0.5) {
       return {
         label: 'Above Max Pain',
-        color: 'info',
-        description: 'Current price is above max pain; calls may be relatively expensive.',
+        emoji: '🟢',
+        color: 'success',
+        direction: `${pct.toFixed(2)}% above`,
+        description:
+          'The stock is trading well above Max Pain. This can sometimes lead to a small pullback toward that level before expiration, but it is not guaranteed.',
       };
     }
     return {
       label: 'At Max Pain',
-      color: 'success',
-      description: 'Price is close to the max pain level, where open interest pain is minimized.',
+      emoji: '⚪',
+      color: 'default',
+      direction: 'right at',
+      description: 'Price is trading close to the Max Pain level, so this is not a meaningful pull in either direction.',
     };
   };
 
@@ -283,44 +381,51 @@ export default function OptionsAnalyticsDashboardPage() {
     if (side === 'call') {
       if (callValue > putValue * 1.15) {
         return {
-          label: 'Bullish OI',
+          label: 'Bullish',
+          emoji: '🟢',
           color: 'success',
-          description: 'Call open interest exceeds put open interest, suggesting stronger bullish or resistance positioning.',
+          description: 'Call open interest is meaningfully higher than put open interest, suggesting bullish positioning.',
         };
       }
       if (callValue < putValue * 0.85) {
         return {
-          label: 'Weak Call OI',
-          color: 'warning',
-          description: 'Call open interest is lower than put open interest, which may indicate less bullish conviction.',
+          label: 'Bearish',
+          emoji: '🔴',
+          color: 'error',
+          description: 'Call open interest is meaningfully lower than put open interest, suggesting less bullish conviction.',
         };
       }
       return {
-        label: 'Balanced OI',
-        color: 'info',
-        description: 'Call and put open interest are roughly balanced, indicating neutral positioning.',
+        label: 'Balanced',
+        emoji: '⚪',
+        color: 'default',
+        description: 'Many traders have open call options, but the number is very similar to puts. This does not show a strong bullish signal.',
       };
     }
 
     if (side === 'put') {
       if (putValue > callValue * 1.15) {
         return {
-          label: 'Bearish OI',
-          color: 'warning',
-          description: 'Put open interest exceeds call open interest, suggesting protective or bearish positioning.',
+          label: 'Bearish',
+          emoji: '🔴',
+          color: 'error',
+          description: 'Put open interest is meaningfully higher than call open interest, suggesting protective or bearish positioning.',
         };
       }
       if (putValue < callValue * 0.85) {
         return {
-          label: 'Weak Put OI',
+          label: 'Bullish',
+          emoji: '🟢',
           color: 'success',
-          description: 'Put open interest is lower than call open interest, which may indicate less bearish conviction.',
+          description: 'Put open interest is meaningfully lower than call open interest, suggesting less bearish conviction.',
         };
       }
       return {
-        label: 'Balanced OI',
-        color: 'info',
-        description: 'Call and put open interest are roughly balanced, indicating neutral positioning.',
+        label: 'Balanced',
+        emoji: '⚪',
+        color: 'default',
+        description:
+          'Many traders also hold put options for downside protection. Since call and put positions are almost equal, the overall positioning is neutral.',
       };
     }
     return null;
@@ -379,9 +484,9 @@ export default function OptionsAnalyticsDashboardPage() {
       }
     : null;
 
-  const callGexStatus = getGexStatus(gexRow?.call_gex);
-  const putGexStatus = getGexStatus(gexRow?.put_gex);
-  const totalGexStatus = getGexStatus(gexRow?.total_gex);
+  const callGexNarrative = getGexNarrative('call', gexRow?.call_gex);
+  const putGexNarrative = getGexNarrative('put', gexRow?.put_gex);
+  const totalGexNarrative = getGexNarrative('total', gexRow?.total_gex);
   const maxPainStatus = getMaxPainStatus(maxPainRow?.distance_pct);
   const callOiStatus = getOpenInterestStatus(maxPainRow?.call_oi, maxPainRow?.put_oi, 'call');
   const putOiStatus = getOpenInterestStatus(maxPainRow?.call_oi, maxPainRow?.put_oi, 'put');
@@ -411,31 +516,45 @@ export default function OptionsAnalyticsDashboardPage() {
 
     const totalGex = gexRow?.total_gex != null ? Number(gexRow.total_gex) : null;
     if (totalGex != null) {
+      const vote = totalGex > 0 ? 1 : totalGex < 0 ? -1 : 0;
       factors.push({
         key: 'gex',
         weight: 2,
-        vote: totalGex > 0 ? 1 : totalGex < 0 ? -1 : 0,
-        sentence:
-          totalGex > 0
-            ? 'Total GEX is positive, indicating a long-gamma regime that may support upward pressure as option sellers hedge into rising prices.'
-            : totalGex < 0
-              ? 'Total GEX is negative, indicating a short-gamma regime that may amplify downside moves as option sellers hedge into falling prices.'
-              : 'Total GEX is neutral, indicating balanced gamma exposure.',
+        vote,
+        detail:
+          vote === 1
+            ? 'Positive. This usually helps keep prices moving upward because option dealers buy shares as the price rises.'
+            : vote === -1
+              ? 'Negative. This can add downward pressure, because option dealers may need to sell shares as the price falls.'
+              : 'Neutral. Dealer positioning is balanced, so it is not adding meaningful pressure in either direction.',
+        whatItMeans:
+          vote === 1
+            ? 'Dealers are helping support higher prices.'
+            : vote === -1
+              ? 'Dealers may add downward pressure as the price falls.'
+              : 'Dealer positioning is balanced.',
       });
     }
 
     const skew = displayOptionsMetrics?.skew != null ? Number(displayOptionsMetrics.skew) : null;
     if (skew != null) {
+      const vote = skew < 0 ? 1 : skew > 0 ? -1 : 0;
       factors.push({
         key: 'skew',
         weight: 1,
-        vote: skew < 0 ? 1 : skew > 0 ? -1 : 0,
-        sentence:
-          skew > 0
-            ? 'Volatility skew is positive, showing put skew and suggesting demand for downside protection.'
-            : skew < 0
-              ? 'Volatility skew is negative, showing call skew and suggesting bullish interest in upside risk.'
-              : 'Volatility skew is neutral, showing no strong call/put bias.',
+        vote,
+        detail:
+          vote === -1
+            ? 'More traders are buying downside protection, which is a small warning sign.'
+            : vote === 1
+              ? 'More traders are favoring upside bets over downside protection, which is a mild bullish signal.'
+              : 'Traders are not strongly favoring calls or puts right now, so this is not adding a lean either way.',
+        whatItMeans:
+          vote === -1
+            ? 'Traders are buying more downside protection.'
+            : vote === 1
+              ? 'Traders are favoring upside bets over downside protection.'
+              : 'Calls and puts are evenly favored.',
       });
     }
 
@@ -444,16 +563,21 @@ export default function OptionsAnalyticsDashboardPage() {
       // Max pain theory: price tends to drift toward max pain into expiry,
       // so being meaningfully above/below it is a mild pull in the
       // OPPOSITE direction -- not "above max pain = bullish".
+      const vote = maxPain > 0.5 ? -1 : maxPain < -0.5 ? 1 : 0;
       factors.push({
         key: 'maxPain',
         weight: 0.5,
-        vote: maxPain > 0.5 ? -1 : maxPain < -0.5 ? 1 : 0,
-        sentence:
-          maxPain > 0.5
-            ? 'Price is above max pain, which may reflect heavier call exposure and a mild pull back toward max pain into expiry.'
-            : maxPain < -0.5
-              ? 'Price is below max pain, which may reflect heavier put exposure and a mild pull back toward max pain into expiry.'
-              : 'Price is close to max pain, suggesting the options market is relatively balanced around current levels.',
+        vote,
+        detail:
+          vote === -1
+            ? 'The stock is trading above the price where option sellers would benefit most. This could cause a small pullback before option expiration, but by itself it is not a strong signal.'
+            : vote === 1
+              ? 'The stock is trading below the price where option sellers would benefit most. This could cause a small bounce before option expiration, but by itself it is not a strong signal.'
+              : 'The stock is trading close to the price where option sellers would benefit most, so this is not a meaningful pull in either direction.',
+        whatItMeans:
+          vote === 0
+            ? 'Price is close to the Max Pain level.'
+            : 'Price may drift slightly toward the Max Pain level before expiration.',
       });
     }
 
@@ -463,16 +587,23 @@ export default function OptionsAnalyticsDashboardPage() {
     if (premiumPcr != null) {
       // Same call-biased/put-biased thresholds as the Premium Put/Call
       // Ratio card itself (SummaryCards.jsx getMetricStatus('premium_pcr')).
+      const vote = premiumPcr < 0.7 ? 1 : premiumPcr > 1.5 ? -1 : 0;
       factors.push({
         key: 'premiumPcr',
         weight: 1,
-        vote: premiumPcr < 0.7 ? 1 : premiumPcr > 1.5 ? -1 : 0,
-        sentence:
-          premiumPcr < 0.7
-            ? 'Premium put/call ratio is call-biased -- real dollars are flowing predominantly into calls today.'
-            : premiumPcr > 1.5
-              ? 'Premium put/call ratio is put-biased -- real dollars are flowing predominantly into puts today.'
-              : 'Premium put/call ratio is roughly balanced between calls and puts.',
+        vote,
+        detail:
+          vote === 1
+            ? 'More real money is flowing into call options than put options, showing traders are betting on higher prices.'
+            : vote === -1
+              ? 'More real money is flowing into put options than call options, showing traders are betting on lower prices or hedging downside risk.'
+              : 'Money is flowing fairly evenly between calls and puts, so this is not showing a strong directional bet.',
+        whatItMeans:
+          vote === 1
+            ? 'More money is going into call options than put options.'
+            : vote === -1
+              ? 'More money is going into put options than call options.'
+              : 'Calls and puts are getting roughly equal money flow.',
       });
     }
 
@@ -485,12 +616,18 @@ export default function OptionsAnalyticsDashboardPage() {
         key: 'openInterest',
         weight: 1,
         vote,
-        sentence:
+        detail:
           vote === 1
-            ? 'Call open interest exceeds put open interest, suggesting bullish or resistance-testing positioning.'
+            ? 'There are meaningfully more open call contracts than put contracts, which can reflect bullish positioning or traders testing resistance.'
             : vote === -1
-              ? 'Put open interest exceeds call open interest, suggesting protective or bearish positioning.'
-              : 'Call and put open interest are roughly balanced.',
+              ? 'There are meaningfully more open put contracts than call contracts, which can reflect protective or bearish positioning.'
+              : 'The number of open call and put contracts is fairly balanced, so this does not strongly favor either direction.',
+        whatItMeans:
+          vote === 1
+            ? 'More open call contracts than put contracts.'
+            : vote === -1
+              ? 'More open put contracts than call contracts.'
+              : 'Calls and puts are evenly balanced.',
       });
     }
 
@@ -502,7 +639,8 @@ export default function OptionsAnalyticsDashboardPage() {
         key: 'callWallBreak',
         weight: 1,
         vote: 1,
-        sentence: 'Price has pushed above the call wall, suggesting that resistance is no longer holding.',
+        detail: 'Price has pushed above the call wall, suggesting that resistance is no longer holding and a larger upward move may be underway.',
+        whatItMeans: 'Price has broken above resistance.',
       });
     }
     if (spot != null && putWallStrike != null && spot <= putWallStrike) {
@@ -510,7 +648,8 @@ export default function OptionsAnalyticsDashboardPage() {
         key: 'putWallBreak',
         weight: 1,
         vote: -1,
-        sentence: 'Price has fallen below the put wall, suggesting that support is no longer holding.',
+        detail: 'Price has fallen below the put wall, suggesting that support is no longer holding and a larger downward move may be underway.',
+        whatItMeans: 'Price has broken below support.',
       });
     }
 
@@ -530,30 +669,77 @@ export default function OptionsAnalyticsDashboardPage() {
     const score = factors.reduce((sum, f) => sum + f.weight * f.vote, 0);
 
     if (score >= 3) {
-      return { label: 'Buy', chipColor: 'success', textColor: 'success.main', advice: 'Buy.' };
+      return {
+        label: 'Buy',
+        chipColor: 'success',
+        textColor: 'success.main',
+        emoji: '🟢',
+        explanation: 'Strong signals point to higher prices',
+        intro: "Most of today's option data points to higher prices.",
+        direction: 'bullish',
+      };
     }
     if (score >= 1) {
-      return { label: 'Bullish', chipColor: 'success', textColor: 'success.main', advice: 'Keep with bullish bias.' };
+      return {
+        label: 'Bullish',
+        chipColor: 'success',
+        textColor: 'success.main',
+        emoji: '🟢',
+        explanation: 'Price is more likely to move up',
+        intro: "Most of today's option data points to higher prices.",
+        direction: 'bullish',
+      };
     }
     if (score <= -3) {
-      return { label: 'Sell', chipColor: 'error', textColor: 'error.main', advice: 'Sell.' };
+      return {
+        label: 'Sell',
+        chipColor: 'error',
+        textColor: 'error.main',
+        emoji: '🔴',
+        explanation: 'Strong signals point to lower prices',
+        intro: "Most of today's option data points to lower prices.",
+        direction: 'bearish',
+      };
     }
     if (score <= -1) {
-      return { label: 'Bearish', chipColor: 'error', textColor: 'error.main', advice: 'Keep with bearish/cautious bias.' };
+      return {
+        label: 'Bearish',
+        chipColor: 'error',
+        textColor: 'error.main',
+        emoji: '🔴',
+        explanation: 'Price is more likely to move down',
+        intro: "Most of today's option data points to lower prices.",
+        direction: 'bearish',
+      };
     }
     return {
       label: 'Neutral',
       chipColor: 'default',
       textColor: 'text.secondary',
-      advice: 'Keep position; signals are mixed or too weak for a clear bias.',
+      emoji: '⚪',
+      explanation: 'Signals are mixed, with no clear directional edge',
+      intro: "Today's option data is mixed, with no strong directional lean.",
+      direction: 'neutral',
     };
   };
 
-  const getOverallConclusion = (factors) => {
-    if (!factors || factors.length === 0) return null;
-    const sentences = factors.map((f) => f.sentence);
-    const { advice } = getMarketSignal(factors);
-    return `${sentences.join(' ')} ${advice}`;
+  // "Overall:" wrap-up sentence -- states which side wins, then adds a
+  // caveat only when at least one factor actually disagrees with the
+  // conclusion (a clean sweep gets no "although" hedge).
+  const getOverallSummary = (factors, signal) => {
+    if (!factors || factors.length === 0 || !signal) return null;
+    const hasBullishFactor = factors.some((f) => f.vote > 0);
+    const hasBearishFactor = factors.some((f) => f.vote < 0);
+
+    if (signal.direction === 'bullish') {
+      const caveat = hasBearishFactor ? ', although a short-term pullback is still possible.' : '.';
+      return `The positive signals outweigh the negative ones, so the market currently has a bullish bias${caveat}`;
+    }
+    if (signal.direction === 'bearish') {
+      const caveat = hasBullishFactor ? ', although a short-term bounce is still possible.' : '.';
+      return `The negative signals outweigh the positive ones, so the market currently has a bearish bias${caveat}`;
+    }
+    return "Signals are mixed and don't strongly favor either direction, so the market currently has a neutral bias.";
   };
 
   const marketSignal = getMarketSignal(marketFactors);
@@ -568,19 +754,46 @@ export default function OptionsAnalyticsDashboardPage() {
   const getRecommendedStrategy = (score, vrpPct) => {
     if (score == null || vrpPct == null || Number.isNaN(score) || Number.isNaN(vrpPct)) return null;
     const rich = vrpPct > 10;
+    const pricingWhy = rich
+      ? 'Option prices are currently rich, so selling premium is favored over buying it.'
+      : 'Option prices are relatively cheap or fairly valued.';
+
     if (score >= 1.5) {
-      return rich
-        ? 'Bull Put Spread / Covered Call (Vol is rich, sell premium)'
-        : 'Long Call / Call Debit Spread (Vol is cheap/neutral, buy premium)';
+      return {
+        name: rich ? 'Bull Put Spread / Covered Call' : 'Long Call / Bull Call Spread',
+        why: [
+          'Most signals suggest prices could continue to rise.',
+          pricingWhy,
+          rich
+            ? 'This strategy profits from a steady or rising stock while collecting premium up front.'
+            : 'This strategy profits if the stock moves higher while limiting risk.',
+        ],
+      };
     }
     if (score <= -1.5) {
-      return rich
-        ? 'Bear Call Spread (Vol is rich, sell premium)'
-        : 'Long Put / Put Debit Spread (Vol is cheap/neutral, buy premium)';
+      return {
+        name: rich ? 'Bear Call Spread' : 'Long Put / Put Debit Spread',
+        why: [
+          'Most signals suggest prices could continue to fall.',
+          pricingWhy,
+          rich
+            ? 'This strategy profits from a steady or falling stock while collecting premium up front.'
+            : 'This strategy profits if the stock moves lower while limiting risk.',
+        ],
+      };
     }
-    return rich
-      ? 'Iron Condor / Short Straddle (Expect pinning, sell premium)'
-      : 'Long Straddle / Calendar Spread (Expect breakout, buy premium)';
+    return {
+      name: rich ? 'Iron Condor / Short Straddle' : 'Long Straddle / Calendar Spread',
+      why: [
+        rich
+          ? 'Signals are mixed, suggesting the stock may stay range-bound.'
+          : 'Signals are mixed, but a breakout move in either direction is possible.',
+        pricingWhy,
+        rich
+          ? 'This strategy profits if the stock stays within a range into expiration.'
+          : 'This strategy profits from a big move in either direction.',
+      ],
+    };
   };
 
   const totalScore = marketFactors.reduce((sum, f) => sum + f.weight * f.vote, 0);
@@ -703,9 +916,9 @@ export default function OptionsAnalyticsDashboardPage() {
           />
 
           <SectionHeader
-            icon="🎯"
-            title="Structural & Dealer Positioning Overview"
-            goal="Identify market maker hedging levels, price ceilings/floors, and key volatility acceleration zones."
+            icon="🌀"
+            title="Gamma Exposure (GEX) — Simple Explanation"
+            goal="Understand how option dealers are likely to react when the stock price moves, and which price levels matter most."
           />
 
           {/* History trend chart (separate from the point-in-time cards below --
@@ -715,84 +928,99 @@ export default function OptionsAnalyticsDashboardPage() {
           {/* GEX Summary */}
           {gexRow && (
             <Paper sx={{ p: 2, mb: 3 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                 <Typography variant="h6">
-                  Gamma Exposure (GEX) {selectedExpiration ? `(Live: ${selectedExpiration})` : ''}
+                  What does this tell us? {selectedExpiration ? `(Live: ${selectedExpiration})` : ''}
                 </Typography>
                 <LastUpdated timestamp={gexRow.fetched_at} />
               </Box>
+              <Typography variant="body2" sx={{ mb: 2 }}>
+                GEX shows how option dealers (big banks/market makers) are likely to react when the stock price
+                moves. Their buying and selling can either calm the price down or make moves bigger.
+              </Typography>
+
+              <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }}>
+                1. Overall Market Behavior
+              </Typography>
               <Grid container spacing={2}>
-                <Grid item xs={12} sm={6} md={3}>
-                  <Card>
+                <Grid item xs={12} sm={6} md={4}>
+                  <Card sx={{ height: '100%' }}>
                     <CardContent>
                       <Typography color="textSecondary">Call GEX</Typography>
                       <Typography variant="h6">
                         {gexRow.call_gex?.toFixed(2) || 'N/A'}
                       </Typography>
-                      {gexRow.call_gex != null && (
-                        <Box sx={{ mt: 1 }}>
-                          <Chip label={callGexStatus?.label} color={callGexStatus?.color} size="small" />
-                          {callGexStatus?.description && (
-                            <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
-                              {callGexStatus.description}
-                            </Typography>
-                          )}
-                        </Box>
+                      {callGexNarrative && (
+                        <>
+                          <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 600 }}>
+                            {callGexNarrative.emoji} {callGexNarrative.label} — {callGexNarrative.arrow} {callGexNarrative.meaning}
+                          </Typography>
+                          <Box component="ul" sx={{ mt: 1, mb: 0, pl: 2.5 }}>
+                            {callGexNarrative.bullets.map((bullet) => (
+                              <Typography key={bullet} component="li" variant="caption" color="text.secondary">
+                                {bullet}
+                              </Typography>
+                            ))}
+                          </Box>
+                          <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
+                            <strong>Simple version:</strong> {callGexNarrative.simple}
+                          </Typography>
+                        </>
                       )}
                     </CardContent>
                   </Card>
                 </Grid>
-                <Grid item xs={12} sm={6} md={3}>
-                  <Card>
+                <Grid item xs={12} sm={6} md={4}>
+                  <Card sx={{ height: '100%' }}>
                     <CardContent>
                       <Typography color="textSecondary">Put GEX</Typography>
                       <Typography variant="h6">
                         {gexRow.put_gex?.toFixed(2) || 'N/A'}
                       </Typography>
-                      {gexRow.put_gex != null && (
-                        <Box sx={{ mt: 1 }}>
-                          <Chip label={putGexStatus?.label} color={putGexStatus?.color} size="small" />
-                          {putGexStatus?.description && (
-                            <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
-                              {putGexStatus.description}
-                            </Typography>
-                          )}
-                        </Box>
+                      {putGexNarrative && (
+                        <>
+                          <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 600 }}>
+                            {putGexNarrative.emoji} {putGexNarrative.label} — {putGexNarrative.arrow} {putGexNarrative.meaning}
+                          </Typography>
+                          <Box component="ul" sx={{ mt: 1, mb: 0, pl: 2.5 }}>
+                            {putGexNarrative.bullets.map((bullet) => (
+                              <Typography key={bullet} component="li" variant="caption" color="text.secondary">
+                                {bullet}
+                              </Typography>
+                            ))}
+                          </Box>
+                          <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
+                            <strong>Simple version:</strong> {putGexNarrative.simple}
+                          </Typography>
+                        </>
                       )}
                     </CardContent>
                   </Card>
                 </Grid>
-                <Grid item xs={12} sm={6} md={3}>
-                  <Card>
+                <Grid item xs={12} sm={6} md={4}>
+                  <Card sx={{ height: '100%' }}>
                     <CardContent>
                       <Typography color="textSecondary">Total GEX</Typography>
                       <Typography variant="h6">
                         {gexRow.total_gex?.toFixed(2) || 'N/A'}
                       </Typography>
-                      {gexRow.total_gex != null && (
-                        <Box sx={{ mt: 1 }}>
-                          <Chip label={totalGexStatus?.label} color={totalGexStatus?.color} size="small" />
-                          {totalGexStatus?.description && (
-                            <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
-                              {totalGexStatus.description}
-                            </Typography>
-                          )}
-                        </Box>
+                      {totalGexNarrative && (
+                        <>
+                          <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 600 }}>
+                            {totalGexNarrative.emoji} {totalGexNarrative.label}
+                          </Typography>
+                          <Typography variant="caption" sx={{ display: 'block', mt: 1, fontWeight: 600 }}>
+                            Overall message:
+                          </Typography>
+                          <Box sx={{ mt: 0.5 }}>
+                            {totalGexNarrative.checklist.map((item) => (
+                              <Typography key={item.text} variant="caption" sx={{ display: 'block', color: 'text.secondary' }}>
+                                {item.ok ? '✅' : '⚠️'} {item.text}
+                              </Typography>
+                            ))}
+                          </Box>
+                        </>
                       )}
-                    </CardContent>
-                  </Card>
-                </Grid>
-                <Grid item xs={12} sm={6} md={3}>
-                  <Card>
-                    <CardContent>
-                      <Typography color="textSecondary">Flip Level</Typography>
-                      <Typography variant="h6">
-                        ${gexRow.flip_level?.toFixed(2) || 'N/A'}
-                      </Typography>
-                      <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
-                        The price where dealer hedging flips character. Above it, dealers tend to smooth out
-                        price swings; below it, their hedging can amplify moves instead.
-                      </Typography>
                     </CardContent>
                   </Card>
                 </Grid>
@@ -805,7 +1033,7 @@ export default function OptionsAnalyticsDashboardPage() {
             <Paper sx={{ p: 2, mb: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h6">
-                  Structural Levels {selectedExpiration ? `(Live: ${selectedExpiration})` : '(Live: nearest expiration)'}
+                  📍 Important Price Levels {selectedExpiration ? `(Live: ${selectedExpiration})` : '(Live: nearest expiration)'}
                 </Typography>
                 <LastUpdated timestamp={displayAnalysisData.timestamp} />
               </Box>
@@ -827,135 +1055,124 @@ export default function OptionsAnalyticsDashboardPage() {
                 const formatStrike = (strike) =>
                   invalidStructuralLevels || strike == null ? 'N/A' : `$${strike.toFixed(2)}`;
 
-                const formatGex = (value) =>
-                  invalidStructuralLevels || value == null ? 'N/A' : value.toLocaleString('en-US', { maximumFractionDigits: 0 });
-
-                const formatCumGex = (value) =>
-                  invalidStructuralLevels || value == null ? 'N/A' : value.toLocaleString('en-US', { maximumFractionDigits: 0 });
-
-                // Where price sits relative to each structural level, right now --
-                // same "Above Max Pain" style badge as the Max Pain card above.
                 const spot = displayAnalysisData.spot_price;
+                const haveLevels = !invalidStructuralLevels && spot != null && callWallStrike != null && putWallStrike != null && flipLevelStrike != null;
 
-                const callWallStatus = (() => {
-                  if (invalidStructuralLevels || spot == null || callWallStrike == null) return null;
-                  if (spot >= callWallStrike) {
-                    return { label: 'Above Call Wall', color: 'warning', description: 'Price has pushed above the call wall -- this resistance may no longer be holding, or a bigger move is underway.' };
-                  }
-                  if (((spot - callWallStrike) / callWallStrike) * 100 > -2) {
-                    return { label: 'Near Call Wall', color: 'warning', description: 'Price is close to the call wall; upward moves may face resistance here as dealers hedge.' };
-                  }
-                  return { label: 'Below Call Wall', color: 'info', description: 'Price has room to run before reaching the call wall.' };
-                })();
+                // "$X room" vs "very close" -- same <1%-of-spot threshold used
+                // elsewhere on this page for "near" a structural level.
+                const roomToCallWall = haveLevels && spot < callWallStrike ? callWallStrike - spot : null;
+                const roomIsTinyAboveCall = roomToCallWall != null && (roomToCallWall / spot) * 100 < 1;
+                const distanceToPutWall = haveLevels && spot > putWallStrike ? spot - putWallStrike : null;
+                const distanceIsTinyAbovePut = distanceToPutWall != null && (distanceToPutWall / spot) * 100 < 1;
 
-                const putWallStatus = (() => {
-                  if (invalidStructuralLevels || spot == null || putWallStrike == null) return null;
-                  if (spot <= putWallStrike) {
-                    return { label: 'Below Put Wall', color: 'warning', description: 'Price has fallen below the put wall -- this support may no longer be holding.' };
-                  }
-                  if (((spot - putWallStrike) / putWallStrike) * 100 < 2) {
-                    return { label: 'Near Put Wall', color: 'warning', description: 'Price is close to the put wall; downward moves may find support here as dealers hedge.' };
-                  }
-                  return { label: 'Above Put Wall', color: 'success', description: 'Price has room before reaching the put wall.' };
-                })();
-
-                const flipStatus = (() => {
-                  if (invalidStructuralLevels || spot == null || flipLevelStrike == null) return null;
-                  if (spot > flipLevelStrike) {
-                    return { label: 'Long Gamma Regime', color: 'success', description: 'Price is above the flip level -- dealer hedging tends to dampen swings here, favoring calmer trading.' };
-                  }
-                  return { label: 'Short Gamma Regime', color: 'warning', description: 'Price is below the flip level -- dealer hedging can amplify moves here, favoring choppier trading.' };
-                })();
+                const flipPct = haveLevels ? ((spot - flipLevelStrike) / flipLevelStrike) * 100 : null;
+                const flipZone =
+                  flipPct == null
+                    ? null
+                    : flipPct > 5
+                      ? 'well above the danger zone'
+                      : flipPct > 0
+                        ? 'getting close to the danger zone'
+                        : 'below the danger zone, where dealers may amplify moves';
 
                 return (
                   <>
                     <Grid container spacing={2}>
                       <Grid item xs={12} sm={6} md={3}>
-                        <Card>
+                        <Card sx={{ height: '100%' }}>
+                          <CardContent>
+                            <Typography color="textSecondary">Current Stock Price</Typography>
+                            <Typography variant="h6">
+                              ${spot?.toFixed(2) || 'N/A'}
+                            </Typography>
+                            <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
+                              This is where the stock is trading now -- the point every level below is measured against.
+                            </Typography>
+                          </CardContent>
+                        </Card>
+                      </Grid>
+                      <Grid item xs={12} sm={6} md={3}>
+                        <Card sx={{ height: '100%' }}>
                           <CardContent>
                             <Typography color="textSecondary">Call Wall</Typography>
                             <Typography variant="h6">
                               {formatStrike(callWallStrike)}
                             </Typography>
                             <Typography variant="caption" color="textSecondary">
-                              GEX: {formatGex(displayAnalysisData.call_wall?.gex)}
+                              Think: Ceiling
                             </Typography>
-                            {callWallStatus && (
-                              <Box sx={{ mt: 1 }}>
-                                <Chip label={callWallStatus.label} color={callWallStatus.color} size="small" />
-                                <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
-                                  {callWallStatus.description}
-                                </Typography>
-                              </Box>
+                            <Box component="ul" sx={{ mt: 1, mb: 0, pl: 2.5 }}>
+                              <Typography component="li" variant="caption" color="text.secondary">
+                                The biggest concentration of call options is around this strike.
+                              </Typography>
+                              <Typography component="li" variant="caption" color="text.secondary">
+                                This level may act as resistance -- the stock may struggle to break above it.
+                              </Typography>
+                            </Box>
+                            {haveLevels && (
+                              <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
+                                <strong>Current situation:</strong>{' '}
+                                {spot >= callWallStrike
+                                  ? 'The stock has already broken above this level.'
+                                  : roomIsTinyAboveCall
+                                    ? 'The stock is very close to this level.'
+                                    : `The stock has about $${roomToCallWall.toFixed(2)} room to move upward before hitting this level.`}
+                              </Typography>
                             )}
-                            <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
-                              Strike with the heaviest call-side gamma -- tends to act like a ceiling the price
-                              struggles to push above.
-                            </Typography>
                           </CardContent>
                         </Card>
                       </Grid>
                       <Grid item xs={12} sm={6} md={3}>
-                        <Card>
+                        <Card sx={{ height: '100%' }}>
                           <CardContent>
                             <Typography color="textSecondary">Put Wall</Typography>
                             <Typography variant="h6">
                               {formatStrike(putWallStrike)}
                             </Typography>
                             <Typography variant="caption" color="textSecondary">
-                              GEX: {formatGex(displayAnalysisData.put_wall?.gex)}
+                              Think: Floor
                             </Typography>
-                            {putWallStatus && (
-                              <Box sx={{ mt: 1 }}>
-                                <Chip label={putWallStatus.label} color={putWallStatus.color} size="small" />
-                                <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
-                                  {putWallStatus.description}
-                                </Typography>
-                              </Box>
+                            <Box component="ul" sx={{ mt: 1, mb: 0, pl: 2.5 }}>
+                              <Typography component="li" variant="caption" color="text.secondary">
+                                The biggest concentration of put options is around this strike.
+                              </Typography>
+                              <Typography component="li" variant="caption" color="text.secondary">
+                                This level may attract buyers -- dealers may buy shares here to hedge.
+                              </Typography>
+                            </Box>
+                            {haveLevels && (
+                              <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
+                                <strong>Current situation:</strong>{' '}
+                                {spot <= putWallStrike
+                                  ? 'The stock has already broken below this level.'
+                                  : distanceIsTinyAbovePut
+                                    ? 'The stock is very close to this level.'
+                                    : `The stock has about $${distanceToPutWall.toFixed(2)} room to move downward before reaching this level.`}
+                              </Typography>
                             )}
-                            <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
-                              Strike with the heaviest put-side gamma -- tends to act like a floor that offers support.
-                            </Typography>
                           </CardContent>
                         </Card>
                       </Grid>
                       <Grid item xs={12} sm={6} md={3}>
-                        <Card>
+                        <Card sx={{ height: '100%' }}>
                           <CardContent>
                             <Typography color="textSecondary">Flip Level</Typography>
                             <Typography variant="h6">
                               {formatStrike(flipLevelStrike)}
                             </Typography>
                             <Typography variant="caption" color="textSecondary">
-                              CumGEX: {formatCumGex(displayAnalysisData.flip_level?.cumulative_gex)}
+                              Very important level
                             </Typography>
-                            {flipStatus && (
-                              <Box sx={{ mt: 1 }}>
-                                <Chip label={flipStatus.label} color={flipStatus.color} size="small" />
-                                <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
-                                  {flipStatus.description}
-                                </Typography>
-                              </Box>
+                            <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
+                              This is where dealer behavior changes. Above it, dealers usually stabilize the
+                              stock with smoother moves and lower volatility. Below it, dealers may amplify
+                              moves, making bigger swings more likely.
+                            </Typography>
+                            {haveLevels && (
+                              <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
+                                <strong>Current situation:</strong> The stock is {flipZone}.
+                              </Typography>
                             )}
-                            <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
-                              Where dealer hedging flips character -- calmer above it, choppier below it.
-                            </Typography>
-                          </CardContent>
-                        </Card>
-                      </Grid>
-                      <Grid item xs={12} sm={6} md={3}>
-                        <Card>
-                          <CardContent>
-                            <Typography color="textSecondary">Spot Price</Typography>
-                            <Typography variant="h6">
-                              ${displayAnalysisData.spot_price?.toFixed(2) || 'N/A'}
-                            </Typography>
-                            <Typography variant="caption" color="textSecondary">
-                              Reference
-                            </Typography>
-                            <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
-                              Today's actual stock price -- the point every level above is measured against.
-                            </Typography>
                           </CardContent>
                         </Card>
                       </Grid>
@@ -964,6 +1181,104 @@ export default function OptionsAnalyticsDashboardPage() {
                       <Typography variant="caption" sx={{ mt: 2, display: 'block', color: 'warning.main' }}>
                         ℹ️ Analysis data is too sparse to derive reliable key strike levels.
                       </Typography>
+                    )}
+
+                    {haveLevels && (
+                      <Box sx={{ mt: 3 }}>
+                        <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
+                          🧭 Simple Trading Interpretation
+                        </Typography>
+                        {(() => {
+                          const totalGex = gexRow?.total_gex != null ? Number(gexRow.total_gex) : null;
+                          const isBullishStable = spot > flipLevelStrike && totalGex != null && totalGex > 0;
+                          const isBearishFragile = spot <= flipLevelStrike && totalGex != null && totalGex < 0;
+                          const picture = isBullishStable
+                            ? {
+                                emoji: '🟢',
+                                label: 'Bullish/Stable',
+                                points: [
+                                  'Stock is above the gamma flip level.',
+                                  'Total GEX is positive.',
+                                  'Dealers likely reduce volatility.',
+                                ],
+                              }
+                            : isBearishFragile
+                              ? {
+                                  emoji: '🔴',
+                                  label: 'Bearish/Fragile',
+                                  points: [
+                                    'Stock is below the gamma flip level.',
+                                    'Total GEX is negative.',
+                                    'Dealers likely amplify volatility.',
+                                  ],
+                                }
+                              : {
+                                  emoji: '🟡',
+                                  label: 'Mixed/Watch',
+                                  points: [
+                                    'Price level and dealer positioning are not fully aligned.',
+                                    'Watch both the flip level and total GEX for confirmation.',
+                                  ],
+                                };
+                          return (
+                            <>
+                              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                Current picture: {picture.emoji} {picture.label}
+                              </Typography>
+                              <Box component="ul" sx={{ mt: 0.5, mb: 1.5, pl: 2.5 }}>
+                                {picture.points.map((point) => (
+                                  <Typography key={point} component="li" variant="body2" color="text.secondary">
+                                    {point}
+                                  </Typography>
+                                ))}
+                              </Box>
+
+                              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                🟡 Watch:
+                              </Typography>
+                              <Box component="ul" sx={{ mt: 0.5, mb: 1.5, pl: 2.5 }}>
+                                <Typography component="li" variant="body2" color="text.secondary">
+                                  ${putWallStrike.toFixed(2)} = important support
+                                </Typography>
+                                <Typography component="li" variant="body2" color="text.secondary">
+                                  ${callWallStrike.toFixed(2)} = important resistance
+                                </Typography>
+                              </Box>
+
+                              <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                                Possible scenarios:
+                              </Typography>
+                              <Box component="ul" sx={{ mt: 0.5, mb: 1.5, pl: 2.5 }}>
+                                <Typography component="li" variant="body2" color="text.secondary">
+                                  If price stays between ${putWallStrike.toFixed(2)}–${callWallStrike.toFixed(2)}: expect
+                                  sideways trading. Dealers may keep the stock trapped in this range.
+                                </Typography>
+                                <Typography component="li" variant="body2" color="text.secondary">
+                                  If price breaks above ${callWallStrike.toFixed(2)}: the stock could move higher because
+                                  resistance has been cleared.
+                                </Typography>
+                                <Typography component="li" variant="body2" color="text.secondary">
+                                  If price breaks below ${putWallStrike.toFixed(2)}: selling pressure could increase,
+                                  especially if dealers need to hedge aggressively.
+                                </Typography>
+                              </Box>
+
+                              <Typography variant="body2" sx={{ fontStyle: 'italic', color: 'text.secondary' }}>
+                                &ldquo;
+                                {(() => {
+                                  const stability = spot > flipLevelStrike ? 'a calm stock' : 'a more volatile stock';
+                                  const flipClause =
+                                    spot > flipLevelStrike
+                                      ? `as long as the stock stays above $${flipLevelStrike.toFixed(2)}, dealers are likely to keep volatility under control.`
+                                      : `until the stock reclaims $${flipLevelStrike.toFixed(2)}, dealers are more likely to amplify moves.`;
+                                  return `The options market currently expects ${stability} around $${putWallStrike.toFixed(2)}–$${callWallStrike.toFixed(2)}. $${putWallStrike.toFixed(2)} is the floor, $${callWallStrike.toFixed(2)} is the ceiling, and ${flipClause}`;
+                                })()}
+                                &rdquo;
+                              </Typography>
+                            </>
+                          );
+                        })()}
+                      </Box>
                     )}
                   </>
                 );
@@ -1019,8 +1334,8 @@ export default function OptionsAnalyticsDashboardPage() {
 
           <SectionHeader
             icon="🔥"
-            title="Options Flow & Positioning Heatmap Overview"
-            goal="Spot institutional positioning, contract accumulation, and unusual activity without needing live tick data."
+            title="Max Pain & Options Positioning"
+            goal="See where option traders are positioned and whether today's options activity is bullish, bearish, or neutral."
           />
 
           <MetricHistoryChart symbol={selectedTicker.symbol} metric="maxPain" expiration={selectedExpiration} />
@@ -1038,13 +1353,17 @@ export default function OptionsAnalyticsDashboardPage() {
                 <Grid item xs={12} sm={6} md={3}>
                   <Card>
                     <CardContent>
-                      <Typography color="textSecondary">Max Pain Level</Typography>
+                      <Typography color="textSecondary">🎯 Max Pain Price</Typography>
                       <Typography variant="h6">
                         ${maxPainRow.max_pain?.toFixed(2) || 'N/A'}
                       </Typography>
+                      <Typography variant="body2" sx={{ mt: 1 }}>
+                        Where option buyers lose the most money if the stock expires at this price.
+                      </Typography>
                       <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
-                        The strike where option buyers collectively lose the most at expiration. Some traders
-                        watch it as a possible price magnet into expiry, but it's not a reliable predictor on its own.
+                        <strong>What this means:</strong> Some traders believe the stock may slowly move toward this
+                        price as option expiration approaches. It is only one indicator and should never be used by
+                        itself to predict price.
                       </Typography>
                     </CardContent>
                   </Card>
@@ -1052,19 +1371,19 @@ export default function OptionsAnalyticsDashboardPage() {
                 <Grid item xs={12} sm={6} md={3}>
                   <Card>
                     <CardContent>
-                      <Typography color="textSecondary">Distance %</Typography>
+                      <Typography color="textSecondary">📏 Distance from Max Pain</Typography>
                       <Typography variant="h6">
-                        {maxPainRow.distance_pct?.toFixed(2) || 'N/A'}%
+                        {maxPainRow.distance_pct != null ? `${Math.abs(maxPainRow.distance_pct).toFixed(2)}%` : 'N/A'}
                       </Typography>
-                      {maxPainRow.distance_pct != null && (
-                        <Box sx={{ mt: 1 }}>
-                          <Chip label={maxPainStatus?.label} color={maxPainStatus?.color} size="small" />
-                          {maxPainStatus?.description && (
-                            <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
-                              {maxPainStatus.description}
-                            </Typography>
-                          )}
-                        </Box>
+                      {maxPainStatus && (
+                        <>
+                          <Typography variant="body2" sx={{ mt: 1 }}>
+                            Current price is {maxPainStatus.direction} the Max Pain price.
+                          </Typography>
+                          <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
+                            <strong>What this means:</strong> {maxPainStatus.description}
+                          </Typography>
+                        </>
                       )}
                     </CardContent>
                   </Card>
@@ -1072,20 +1391,17 @@ export default function OptionsAnalyticsDashboardPage() {
                 <Grid item xs={12} sm={6} md={3}>
                   <Card>
                     <CardContent>
-                      <Typography color="textSecondary">Call OI</Typography>
+                      <Typography color="textSecondary">📈 Call Positions (Call OI)</Typography>
                       <Typography variant="h6">
                         {maxPainRow.call_oi?.toLocaleString() || 'N/A'}
                       </Typography>
                       {callOiStatus && (
                         <Box sx={{ mt: 1 }}>
-                          <Chip label={callOiStatus.label} size="small" color={callOiStatus.color} />
-                          <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
-                            {callOiStatus.description}
-                          </Typography>
+                          <Chip label={`${callOiStatus.emoji} ${callOiStatus.label}`} size="small" color={callOiStatus.color} />
                         </Box>
                       )}
                       <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
-                        Call open interest shows the amount of bullish/options resistance flow at strikes above the market.
+                        <strong>What this means:</strong> {callOiStatus?.description}
                       </Typography>
                     </CardContent>
                   </Card>
@@ -1093,20 +1409,17 @@ export default function OptionsAnalyticsDashboardPage() {
                 <Grid item xs={12} sm={6} md={3}>
                   <Card>
                     <CardContent>
-                      <Typography color="textSecondary">Put OI</Typography>
+                      <Typography color="textSecondary">📉 Put Positions (Put OI)</Typography>
                       <Typography variant="h6">
                         {maxPainRow.put_oi?.toLocaleString() || 'N/A'}
                       </Typography>
                       {putOiStatus && (
                         <Box sx={{ mt: 1 }}>
-                          <Chip label={putOiStatus.label} size="small" color={putOiStatus.color} />
-                          <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
-                            {putOiStatus.description}
-                          </Typography>
+                          <Chip label={`${putOiStatus.emoji} ${putOiStatus.label}`} size="small" color={putOiStatus.color} />
                         </Box>
                       )}
                       <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
-                        Put open interest shows the amount of downside protection/support flow at strikes below the market.
+                        <strong>What this means:</strong> {putOiStatus?.description}
                       </Typography>
                     </CardContent>
                   </Card>
@@ -1119,6 +1432,19 @@ export default function OptionsAnalyticsDashboardPage() {
             <>
               <LastUpdated timestamp={displayOptionsMetrics.computed_at} sx={{ display: 'block', mb: 1 }} />
               <SummaryCards data={displayOptionsMetrics} sections={['flow']} />
+              <Paper sx={{ p: 2, mb: 2 }}>
+                <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+                  🔥 Unusual Options Activity
+                </Typography>
+                <Typography variant="body2" sx={{ mt: 0.5 }}>
+                  Shows option contracts that are trading much more than normal today.
+                </Typography>
+                <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
+                  <strong>What this means:</strong> Heavy trading can indicate something important is happening, but
+                  it does not tell you whether traders are buying or selling those contracts. Think of it as a
+                  signal to investigate further, not as a buy or sell signal.
+                </Typography>
+              </Paper>
               <UnusualVolumeTable contracts={displayOptionsMetrics.unusual_volume} />
             </>
           )}
@@ -1137,39 +1463,51 @@ export default function OptionsAnalyticsDashboardPage() {
           )}
 
           <SectionHeader
-            icon="🧭"
+            icon="🎯"
             title="Executive Signal & Strategy Overview"
-            goal="Combine all underlying metrics into an automated, actionable market conclusion and strategy recommendation."
+            goal="Combine all market signals into one simple conclusion and trading suggestion."
           />
 
           {displayOptionsMetrics && (
             <>
               <Paper sx={{ p: 2, mt: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                  <Typography variant="h6" sx={{ mr: 1 }}>
-                    Market Conclusion
-                  </Typography>
-                  {marketSignal && (
-                    <Box
-                      sx={{
-                        width: 12,
-                        height: 12,
-                        borderRadius: '50%',
-                        bgcolor: marketSignal.textColor,
-                        border: '1px solid',
-                        borderColor: marketSignal.textColor,
-                      }}
-                    />
-                  )}
-                  {marketSignal && (
-                    <Typography variant="subtitle2" sx={{ ml: 1, color: marketSignal.textColor }}>
-                      {marketSignal.label}
+                {marketSignal ? (
+                  <>
+                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                      {marketSignal.emoji} Market Conclusion:{' '}
+                      <Box component="span" sx={{ color: marketSignal.textColor }}>
+                        {marketSignal.label}
+                      </Box>{' '}
+                      <Box component="span" sx={{ fontWeight: 400, color: 'text.secondary' }}>
+                        ({marketSignal.explanation})
+                      </Box>
                     </Typography>
-                  )}
-                </Box>
-                <Typography variant="body2" color="text.secondary">
-                  {getOverallConclusion(marketFactors) || 'No conclusion available due to missing metric data.'}
-                </Typography>
+
+                    <Typography variant="body2" sx={{ mt: 1 }}>
+                      {marketSignal.intro}
+                    </Typography>
+
+                    {marketFactors.length > 0 && (
+                      <List sx={{ mt: 0.5 }}>
+                        {marketFactors.map((factor) => (
+                          <ListItem key={factor.key} sx={{ display: 'list-item', listStyleType: 'disc', pl: 0, ml: 3, py: 0.25 }}>
+                            <Typography variant="body2">
+                              <strong>{MARKET_FACTOR_LABELS[factor.key] || factor.key}:</strong> {factor.detail}
+                            </Typography>
+                          </ListItem>
+                        ))}
+                      </List>
+                    )}
+
+                    <Typography variant="body2" sx={{ mt: 1 }}>
+                      <strong>Overall:</strong> {getOverallSummary(marketFactors, marketSignal)}
+                    </Typography>
+                  </>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    No conclusion available due to missing metric data.
+                  </Typography>
+                )}
 
                 {marketFactors.length > 0 && (
                   <TableContainer sx={{ mt: 2 }}>
@@ -1177,31 +1515,28 @@ export default function OptionsAnalyticsDashboardPage() {
                       <TableHead>
                         <TableRow>
                           <TableCell>Factor</TableCell>
+                          <TableCell>What it means</TableCell>
                           <TableCell>Signal</TableCell>
-                          <TableCell align="right">Weight</TableCell>
-                          <TableCell align="right">Contribution</TableCell>
+                          <TableCell align="right">Impact</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {marketFactors.map((factor) => {
-                          const meta = MARKET_FACTOR_LABELS[factor.key] || { label: factor.key, why: '' };
                           const contribution = factor.weight * factor.vote;
-                          const voteLabel = factor.vote > 0 ? 'Bullish' : factor.vote < 0 ? 'Bearish' : 'Neutral';
-                          const voteColor = factor.vote > 0 ? 'success' : factor.vote < 0 ? 'error' : 'default';
+                          const signalMeta = getFactorSignalMeta(factor.vote, factor.weight);
                           return (
                             <TableRow key={factor.key}>
                               <TableCell>
-                                <Typography variant="body2">{meta.label}</Typography>
-                                {meta.why && (
-                                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
-                                    {meta.why}
-                                  </Typography>
-                                )}
+                                <Typography variant="body2">{MARKET_FACTOR_LABELS[factor.key] || factor.key}</Typography>
                               </TableCell>
                               <TableCell>
-                                <Chip label={voteLabel} color={voteColor} size="small" />
+                                <Typography variant="body2" color="text.secondary">
+                                  {factor.whatItMeans}
+                                </Typography>
                               </TableCell>
-                              <TableCell align="right">{factor.weight}</TableCell>
+                              <TableCell>
+                                <Chip label={`${signalMeta.emoji} ${signalMeta.label}`} color={signalMeta.color} size="small" />
+                              </TableCell>
                               <TableCell
                                 align="right"
                                 sx={{
@@ -1220,28 +1555,38 @@ export default function OptionsAnalyticsDashboardPage() {
                             </TableRow>
                           );
                         })}
-                        <TableRow>
-                          <TableCell colSpan={3}>
-                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                              Total score
-                            </Typography>
-                          </TableCell>
-                          <TableCell align="right" sx={{ fontWeight: 700, color: marketSignal?.textColor }}>
-                            {marketFactors.reduce((sum, f) => sum + f.weight * f.vote, 0) > 0 ? '+' : ''}
-                            {marketFactors.reduce((sum, f) => sum + f.weight * f.vote, 0).toFixed(1)}
-                          </TableCell>
-                        </TableRow>
                       </TableBody>
                     </Table>
                   </TableContainer>
                 )}
 
+                {marketSignal && marketFactors.length > 0 && (
+                  <Typography variant="subtitle1" sx={{ mt: 1.5, fontWeight: 700, color: marketSignal.textColor }}>
+                    Overall Score: {totalScore > 0 ? '+' : ''}
+                    {totalScore.toFixed(1)} ({marketSignal.label})
+                  </Typography>
+                )}
+
                 {recommendedStrategy && (
-                  <Box sx={{ mt: 2 }}>
-                    <Typography variant="subtitle2">Recommended Strategy</Typography>
-                    <Typography variant="body2" color="text.secondary">
-                      {recommendedStrategy}
+                  <Box sx={{ mt: 3 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                      📈 Recommended Strategy
                     </Typography>
+                    <Typography variant="subtitle2" sx={{ mt: 0.5 }}>
+                      {recommendedStrategy.name}
+                    </Typography>
+                    <Typography variant="body2" sx={{ mt: 1, fontWeight: 600 }}>
+                      Why?
+                    </Typography>
+                    <List sx={{ mt: 0 }}>
+                      {recommendedStrategy.why.map((reason) => (
+                        <ListItem key={reason} sx={{ display: 'list-item', listStyleType: 'disc', pl: 0, ml: 3, py: 0.25 }}>
+                          <Typography variant="body2" color="text.secondary">
+                            {reason}
+                          </Typography>
+                        </ListItem>
+                      ))}
+                    </List>
                   </Box>
                 )}
 

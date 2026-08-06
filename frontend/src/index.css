@@ -74,11 +74,45 @@ code {
     display: none !important;
   }
 
-  /* MUI Paper relies on box-shadow for depth, which most browsers drop when
-     printing -- without this, printed cards have no visible edge at all. */
-  .MuiPaper-root {
+  /* Most browsers strip background colors on print by default (a user-level
+     "background graphics" toggle, usually off), which is what made the old
+     white-forced print sheet unpredictable: chart panels set their own
+     background.paper color from the theme, so without this the page could
+     come out as a plain white background with stray dark chart boxes, or
+     (worse) dark-theme text left light-colored against a forced-white page
+     and effectively invisible. Forcing color-adjust makes every background
+     below actually render, so the light/dark treatment is consistent. */
+  html {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  html, body {
+    background-color: #121212 !important;
+  }
+
+  /* Blanket white text, then the couple of cases (default-colored chips)
+     that would otherwise become white-on-light-grey get their own
+     background below. Colored Chips (success/error/warning/info) already
+     have enough contrast against a dark page and don't need an override. */
+  * {
+    color: #fff !important;
+  }
+
+  .MuiChip-colorDefault {
+    background-color: #3a3a3a !important;
+  }
+
+  /* MUI Paper/Card rely on box-shadow for depth, which most browsers drop
+     when printing -- a visible border stands in for that edge. break-inside
+     keeps a card's header and body from splitting across a page boundary,
+     which was the other half of the "ugly" layout (orphaned card headers
+     at the bottom of a page, body continuing on the next). */
+  .MuiPaper-root,
+  .MuiCard-root {
+    background-color: #1e1e1e !important;
     box-shadow: none !important;
-    border: 1px solid #ccc !important;
+    border: 1px solid #444 !important;
     break-inside: avoid;
   }
 
@@ -86,7 +120,36 @@ code {
     max-width: 100% !important;
   }
 
-  body {
-    background-color: #fff !important;
+  .MuiTableCell-root,
+  .MuiTableRow-root,
+  .MuiDivider-root {
+    border-color: #444 !important;
+  }
+
+  /* Section dividers (SectionHeader's borderTop) use the light theme's
+     divider color inline -- without this override they're invisible on the
+     forced dark background. */
+  [style*="border-top"] {
+    border-color: #444 !important;
+  }
+
+  /* Recharts sets grid lines/axis labels via SVG stroke/fill attributes,
+     not CSS color -- the blanket `* { color }` rule above doesn't touch
+     these, and their light-theme defaults (e.g. #e0e0e0 gridlines) are
+     nearly invisible against the dark background. Author-stylesheet rules
+     beat presentation attributes, so these !important overrides win over
+     recharts' inline stroke/fill. */
+  .recharts-cartesian-grid-horizontal line,
+  .recharts-cartesian-grid-vertical line {
+    stroke: #444 !important;
+  }
+
+  .recharts-text,
+  .recharts-cartesian-axis-tick-value {
+    fill: #ccc !important;
+  }
+
+  .recharts-reference-line line {
+    stroke: #888 !important;
   }
 }
