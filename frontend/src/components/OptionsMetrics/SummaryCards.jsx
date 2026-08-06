@@ -101,20 +101,20 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
         return {
           label: 'Low IVR',
           color: 'warning',
-          description: 'Implied volatility is low; options are cheaper but may underprice future moves.',
+          description: 'Options are currently inexpensive because the market expects relatively small price moves (low IV Rank).',
         };
       }
       if (num > 80) {
         return {
           label: 'High IVR',
           color: 'warning',
-          description: 'Implied volatility is elevated; premiums are rich and downside protection is expensive.',
+          description: 'Options are currently expensive because the market expects larger price moves (high IV Rank).',
         };
       }
       return {
         label: 'Normal IVR',
         color: 'success',
-        description: 'IVR is in a balanced range; option prices are neither overly cheap nor rich.',
+        description: 'Option prices are neither especially cheap nor expensive right now (mid-range IV Rank).',
       };
     }
 
@@ -123,20 +123,20 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
         return {
           label: 'Put Skew',
           color: 'warning',
-          description: 'Put IV exceeds call IV, indicating demand for downside protection.',
+          description: 'More traders are paying up for protection against the stock falling (put skew).',
         };
       }
       if (num < -0.01) {
         return {
           label: 'Call Skew',
           color: 'success',
-          description: 'Call IV exceeds put IV, suggesting bullish demand for upside exposure.',
+          description: 'More traders are betting on the stock going up than down (call skew).',
         };
       }
       return {
         label: 'Neutral Skew',
         color: 'success',
-        description: 'Volatility skew is balanced across calls and puts.',
+        description: "Traders aren't strongly favoring upside or downside bets right now (neutral skew).",
       };
     }
 
@@ -145,20 +145,20 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
         return {
           label: 'Low HV',
           color: 'success',
-          description: 'Realized volatility is low; the stock has been relatively quiet recently.',
+          description: 'The stock has been fairly calm recently.',
         };
       }
       if (num > 35) {
         return {
           label: 'High HV',
           color: 'warning',
-          description: 'Realized volatility is elevated; recent returns have been large relative to history.',
+          description: 'The stock has been moving around a lot recently.',
         };
       }
       return {
         label: 'Moderate HV',
         color: 'info',
-        description: 'Realized volatility is within a normal market range.',
+        description: "The stock's recent price swings have been fairly typical.",
       };
     }
 
@@ -167,20 +167,20 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
         return {
           label: 'Rich VRP',
           color: 'warning',
-          description: 'Implied volatility is meaningfully richer than realized volatility, making options more expensive.',
+          description: "Options are pricier than the stock's recent moves would suggest they should be (rich VRP).",
         };
       }
       if (num < -2) {
         return {
           label: 'Cheap VRP',
           color: 'success',
-          description: 'Implied volatility is lower than realized volatility, making options relatively inexpensive.',
+          description: "Options are cheaper than the stock's recent moves would suggest they should be (cheap VRP).",
         };
       }
       return {
         label: 'Neutral VRP',
         color: 'info',
-        description: 'IV and realized volatility are aligned, indicating balanced option pricing.',
+        description: 'Option prices roughly match how much the stock has actually been moving (neutral VRP).',
       };
     }
 
@@ -188,7 +188,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
       return {
         label: 'Guidance',
         color: 'info',
-        description: 'Expected move is the at-the-money call + put premium, representing one standard move estimate for the expiry.',
+        description: "This isn't a prediction -- just the market's best estimate of how far the stock could move by expiration.",
       };
     }
 
@@ -197,20 +197,20 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
         return {
           label: 'Put-Biased',
           color: 'warning',
-          description: 'Put premium dominates call premium, signaling protective demand or bearish positioning.',
+          description: 'More money is currently being spent on put options than call options.',
         };
       }
       if (num < 0.7) {
         return {
           label: 'Call-Biased',
           color: 'success',
-          description: 'Call premium dominates, suggesting bullish option demand.',
+          description: 'More money is currently being spent on call options than put options.',
         };
       }
       return {
         label: 'Neutral Premium',
         color: 'info',
-        description: 'Call and put premiums are roughly balanced.',
+        description: 'Roughly equal money is being spent on call and put options.',
       };
     }
 
@@ -219,20 +219,20 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
         return {
           label: 'Long Gamma',
           color: 'success',
-          description: 'Positive gamma exposure; option sellers may hedge into moves and reduce volatility.',
+          description: 'Dealers are helping keep the price more stable -- large swings are less likely (positive GEX).',
         };
       }
       if (num < 0) {
         return {
           label: 'Short Gamma',
           color: 'warning',
-          description: 'Negative gamma exposure; market makers may amplify moves when hedging.',
+          description: 'Dealers may have to buy and sell shares quickly, which can make price swings bigger (negative GEX).',
         };
       }
       return {
         label: 'Neutral Gamma',
         color: 'info',
-        description: 'Gamma exposure is balanced and not likely to drive strong hedging flows.',
+        description: "Dealer positioning is balanced and isn't adding much to price swings either way (neutral GEX).",
       };
     }
 
@@ -251,20 +251,20 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
         return {
           label: 'Above Call Wall',
           color: 'warning',
-          description: 'Price has pushed above the call wall -- this resistance level may no longer be holding, or a larger move is underway.',
+          description: 'The stock has already broken above this resistance level.',
         };
       }
       if (pctFromWall > -2) {
         return {
           label: 'Near Call Wall',
           color: 'warning',
-          description: 'Price is close to the call wall; upward moves may face resistance here as dealers hedge.',
+          description: 'The stock is approaching a level where it may face resistance.',
         };
       }
       return {
         label: 'Below Call Wall',
         color: 'info',
-        description: 'Price has room to run before reaching the call wall.',
+        description: 'The stock has room to rise before hitting this resistance level.',
       };
     }
 
@@ -273,20 +273,20 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
       return {
         label: 'Below Put Wall',
         color: 'warning',
-        description: 'Price has fallen below the put wall -- this support level may no longer be holding.',
+        description: 'The stock has already broken below this support level.',
       };
     }
     if (pctFromWall < 2) {
       return {
         label: 'Near Put Wall',
         color: 'warning',
-        description: 'Price is close to the put wall; downward moves may find support here as dealers hedge.',
+        description: 'The stock is approaching a level where buyers may step in.',
       };
     }
     return {
       label: 'Above Put Wall',
       color: 'success',
-      description: 'Price has room before reaching the put wall.',
+      description: 'The stock has room to fall before reaching this support level.',
     };
   };
 
@@ -310,7 +310,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
         <MetricCard
           title="Call Wall"
           value={safeKeyLevel(key_levels?.call_wall)}
-          description="Strike with the heaviest call-side gamma. Price often struggles to push above this level, since dealers hedge in a way that leans against the move -- it tends to act like a ceiling."
+          description="This is a price level where the stock often struggles to move above. Think of it as a ceiling."
           status={getWallStatus(underlying_price, key_levels?.call_wall, 'call')}
         />
       </Grid>
@@ -318,7 +318,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
         <MetricCard
           title="Put Wall"
           value={safeKeyLevel(key_levels?.put_wall)}
-          description="Strike with the heaviest put-side gamma. Price often finds support here as dealers hedge -- tends to act like a floor."
+          description="This is a price level where buyers often step in. Think of it as a floor."
           status={getWallStatus(underlying_price, key_levels?.put_wall, 'put')}
         />
       </Grid>
@@ -333,7 +333,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
               value={net?.net_dex !== undefined ? formatNumber(net.net_dex) : '—'}
               subtitle="Delta Exposure"
               color={net?.net_dex > 0 ? 'success.main' : net?.net_dex < 0 ? 'error.main' : undefined}
-              description="Roughly how many dollars of stock dealers may need to trade for every $1 the price moves, to stay hedged. Positive: dealers may sell into rallies (dampens moves). Negative: dealers may buy into rallies (can fuel moves)."
+              description="Shows how much stock dealers may need to buy or sell as the price moves. Higher numbers usually mean dealers help keep the price more stable."
               status={getExposureSignStatus('DEX')(net?.net_dex)}
             />
           </Grid>
@@ -343,7 +343,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
               value={net?.net_vex !== undefined ? formatNumber(net.net_vex) : '—'}
               subtitle={isModelDerivedGreeks ? 'Vanna Exposure (model estimate)' : 'Vanna Exposure'}
               color={net?.net_vex > 0 ? 'success.main' : net?.net_vex < 0 ? 'error.main' : undefined}
-              description="How much dealer hedging would shift if implied volatility itself changes, separate from any price move. Matters most when volatility is swinging sharply."
+              description="Shows how dealer buying and selling could change if the market's expectations for volatility change."
               status={getExposureSignStatus('VEX')(net?.net_vex)}
             />
           </Grid>
@@ -353,7 +353,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
               value={net?.net_cex !== undefined ? formatNumber(net.net_cex) : '—'}
               subtitle={isModelDerivedGreeks ? 'Charm Exposure (model estimate)' : 'Charm Exposure'}
               color={net?.net_cex > 0 ? 'success.main' : net?.net_cex < 0 ? 'error.main' : undefined}
-              description="How much dealer hedging drifts purely from time passing (fewer days left to expiration), even if price doesn't move. Tends to matter more as expiration gets close."
+              description="Shows how dealer positions naturally change as time passes, even if the stock price doesn't move."
               status={getExposureSignStatus('CEX')(net?.net_cex)}
             />
           </Grid>
@@ -362,7 +362,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
       {sections.includes('greeks') && isModelDerivedGreeks && (
         <Grid item xs={12}>
           <Typography variant="caption" color="text.secondary">
-            VEX/CEX are Black-Scholes estimates (strike + IV + time-to-expiry) — Yahoo's options data doesn't report vanna/charm directly.
+            VEX/CEX are Black-Scholes estimates (strike + IV + time-to-expiry) — Yahoo&apos;s options data doesn&apos;t report vanna/charm directly.
           </Typography>
         </Grid>
       )}
@@ -395,7 +395,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
           value={historicalVolatilityPct != null ? `${historicalVolatilityPct.toFixed(1)}%` : '—'}
           subtitle="20-day realized volatility"
           status={getMetricStatus('historical_volatility', historicalVolatilityPct)}
-          description="How much the stock has actually moved over the past 20 trading days, annualized. This looks backward at what happened -- it isn't a forecast."
+          description="How much the stock has actually been swinging over the past 20 trading days. This looks backward at what already happened -- it isn't a forecast."
         />
       </Grid>
       <Grid item xs={12} sm={6} md={4} lg={3}>
@@ -404,7 +404,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
           value={volatilityRiskPremiumPct != null ? `${volatilityRiskPremiumPct.toFixed(1)}%` : '—'}
           subtitle="ATM IV - HV"
           status={getMetricStatus('volatility_risk_premium', volatilityRiskPremiumPct)}
-          description="The gap between what options are pricing in for future moves (implied) and what the stock actually did recently (realized/historical). Positive means options are pricing in more movement than has actually been happening."
+          description="The gap between how much movement options are pricing in and how much the stock has actually been moving lately. Positive means options are pricing in more movement than the stock has actually shown."
         />
       </Grid>
       <Grid item xs={12} sm={6} md={4} lg={3}>
@@ -413,7 +413,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
           value={expected_move != null ? `$${expected_move.toFixed(2)}` : '—'}
           subtitle="ATM call + put premium"
           status={getMetricStatus('expected_move', expected_move)}
-          description="A rough one-standard-deviation price range for this expiration, priced in by at-the-money options. Roughly a 2-in-3 chance the stock stays within +/- this amount by expiry."
+          description="A rough estimate of how far the stock could move by expiration, based on current option prices. There's roughly a 2-in-3 chance the stock stays within this range."
         />
       </Grid>
       </>
@@ -427,7 +427,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
             : '—'}
           subtitle="Volume-weighted premium ratio"
           status={getMetricStatus('premium_pcr', call_premium_notional != null && put_premium_notional != null ? (put_premium_notional / (call_premium_notional || 1)) : null)}
-          description="Compares dollars traded in put premium vs call premium today (weighted by volume, not just contract count). Above 1: more money flowing into puts. Below 1: more into calls."
+          description="Compares how many dollars are flowing into puts vs calls today. Above 1: more money going into puts. Below 1: more into calls."
         />
       </Grid>
       )}
