@@ -383,6 +383,8 @@ def _horizon_result_to_response(result: HorizonResult) -> OptionsHorizonResponse
             for trading_days, stats in result.horizons.items()
         },
         reason=result.reason,
+        benchmark_ticker=result.benchmark_ticker,
+        benchmark_fingerprint=result.benchmark_fingerprint,
     )
 
 

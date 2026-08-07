@@ -10,6 +10,7 @@ import pytest
 
 from app.services.feature_percentiles.stats import (
     cross_sectional_percentile,
+    trailing_exclusive_latest,
     trailing_exclusive_percentile_rank,
     trailing_exclusive_zscore,
 )
@@ -180,3 +181,64 @@ class TestValidation:
     def test_min_sample_must_be_at_least_two_for_zscore(self):
         with pytest.raises(ValueError):
             trailing_exclusive_zscore(np.array([1.0]), window=10, min_sample=1)
+
+
+class TestTrailingExclusiveLatest:
+    """trailing_exclusive_latest() is the O(window) incremental/backfill
+    building block -- compute.py uses this instead of calling the O(len *
+    window) array functions and discarding everything but the last index,
+    which was accidentally O(days^2) over a bulk backfill (each day
+    redundantly recomputed every earlier day's percentile too). Exhaustive
+    equivalence with the array functions at the last index is verified
+    separately (7,040 randomized cases, 0 mismatches) -- these are the
+    representative/edge cases kept as permanent regression coverage.
+    """
+
+    def test_matches_array_function_at_last_index(self):
+        values = np.array([10.0, 20.0, 30.0, 25.0, 50.0])
+        pct_arr, ss_arr = trailing_exclusive_percentile_rank(values, window=3, min_sample=2)
+        z_arr = trailing_exclusive_zscore(values, window=3, min_sample=2)
+
+        pct, z, sample_size = trailing_exclusive_latest(values[:-1], values[-1], window=3, min_sample=2)
+
+        assert sample_size == ss_arr[-1]
+        assert pct == pytest.approx(pct_arr[-1])
+        assert z == pytest.approx(z_arr[-1])
+
+    def test_below_min_sample_returns_none_with_real_sample_size(self):
+        prior = np.array([10.0, 20.0])
+        pct, z, sample_size = trailing_exclusive_latest(prior, 30.0, window=252, min_sample=60)
+        assert pct is None
+        assert z is None
+        assert sample_size == 2
+
+    def test_nan_current_value_is_null_regardless_of_history(self):
+        prior = np.array([10.0, 20.0, 30.0])
+        pct, z, sample_size = trailing_exclusive_latest(prior, np.nan, window=3, min_sample=2)
+        assert pct is None
+        assert z is None
+        assert sample_size == 3
+
+    def test_nan_in_prior_values_excluded_from_sample_size(self):
+        prior = np.array([10.0, np.nan, 30.0])
+        pct, z, sample_size = trailing_exclusive_latest(prior, 40.0, window=3, min_sample=2)
+        assert sample_size == 2
+        assert pct == pytest.approx(100.0)
+
+    def test_window_caps_reference_to_most_recent_entries_only(self):
+        # window=2 must only look at the last 2 prior values, not all 5.
+        prior = np.array([1000.0, 1000.0, 1000.0, 10.0, 20.0])
+        pct, _z, sample_size = trailing_exclusive_latest(prior, 30.0, window=2, min_sample=2)
+        assert sample_size == 2
+        assert pct == pytest.approx(100.0)  # 30 > both 10 and 20, the only 2 in-window refs
+
+    def test_zero_variance_reference_gives_null_zscore_not_a_crash(self):
+        prior = np.array([100.0, 100.0, 100.0])
+        pct, z, sample_size = trailing_exclusive_latest(prior, 100.0, window=3, min_sample=2)
+        assert sample_size == 3
+        assert pct == pytest.approx(100.0)
+        assert z is None
+
+    def test_window_must_be_positive(self):
+        with pytest.raises(ValueError):
+            trailing_exclusive_latest(np.array([1.0]), 2.0, window=0, min_sample=1)

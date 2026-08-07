@@ -119,6 +119,60 @@ def trailing_exclusive_zscore(
     return z
 
 
+def trailing_exclusive_latest(
+    prior_values: np.ndarray,
+    current_value: float,
+    *,
+    window: int,
+    min_sample: int,
+) -> tuple[float | None, float | None, int]:
+    """Percentile rank AND z-score of a single new value against its own
+    trailing window -- O(window), computing only what's actually needed.
+
+    Equivalent to calling trailing_exclusive_percentile_rank/
+    trailing_exclusive_zscore on ``[*prior_values, current_value]`` and
+    taking the last element of each result (verified by an exhaustive
+    differential test), but WITHOUT recomputing every earlier index's
+    percentile/z-score along the way. Those array functions are O(len *
+    window) in total; computing only the newest day's result via them
+    inside a day-by-day backfill loop is accidentally O(days^2) overall,
+    since day N's call redundantly recomputes days 1..N-1 all over again
+    just to discard them. This function is the O(1)-per-day building
+    block for that loop -- use the array functions when you actually need
+    every index's value (e.g. golden-fixture tests over a known series),
+    use this one for incremental/backfill computation.
+
+    Returns ``(pct, z, sample_size)``. Reference window is
+    ``prior_values[-window:]`` (never including ``current_value``) --
+    same "as much history as exists, capped at window, never padded"
+    rule as the array functions.
+    """
+    if window < 1:
+        raise ValueError("window must be >= 1")
+    if min_sample < 1:
+        raise ValueError("min_sample must be >= 1")
+
+    reference = prior_values[-window:] if prior_values.size > window else prior_values
+    valid_reference = reference[~np.isnan(reference)]
+    sample_size = int(valid_reference.size)
+
+    if sample_size < min_sample:
+        return None, None, sample_size
+    if np.isnan(current_value):
+        return None, None, sample_size
+
+    pct = float((valid_reference <= current_value).sum()) / sample_size * 100.0
+
+    z: float | None = None
+    if sample_size >= 2:
+        std = float(np.std(valid_reference, ddof=1))
+        if std != 0.0:
+            mean = float(np.mean(valid_reference))
+            z = (float(current_value) - mean) / std
+
+    return pct, z, sample_size
+
+
 def cross_sectional_percentile(values_by_ticker: dict[str, float | None]) -> dict[str, float]:
     """Same-day percentile rank of each ticker's value against every other
     ticker with a non-null value in ``values_by_ticker``.

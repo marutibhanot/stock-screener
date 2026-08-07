@@ -60,6 +60,12 @@ class OptionsMetricsResponse(BaseModel):
     put_premium_notional: Optional[float] = None
     underlying_price: Optional[float] = None
     historical_volatility: Optional[float] = None
+    # 10/20/60-day realized-vol term structure -- historical_volatility
+    # above is the same 20-day figure as realized_vol_20d, kept as its own
+    # field for backward compatibility with existing callers.
+    realized_vol_10d: Optional[float] = None
+    realized_vol_20d: Optional[float] = None
+    realized_vol_60d: Optional[float] = None
     current_atm_iv: Optional[float] = None
     volatility_risk_premium: Optional[float] = None
     expected_move: Optional[float] = None
@@ -127,3 +133,8 @@ class OptionsHorizonResponse(BaseModel):
     tolerance_pct: float
     horizons: Dict[str, HorizonWindowStats] = {}
     reason: Optional[str] = None
+    # Same-day fingerprint for benchmark_ticker (default SPY) -- lets a
+    # caller tell "this stock is unusual" apart from "the whole market is
+    # unusual today." Empty when the benchmark has no reading for as_of_date.
+    benchmark_ticker: str = "SPY"
+    benchmark_fingerprint: Dict[str, float] = {}

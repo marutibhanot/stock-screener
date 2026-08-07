@@ -48,8 +48,7 @@ from app.services.feature_percentiles.extraction import (
 )
 from app.services.feature_percentiles.stats import (
     cross_sectional_percentile,
-    trailing_exclusive_percentile_rank,
-    trailing_exclusive_zscore,
+    trailing_exclusive_latest,
 )
 
 
@@ -81,10 +80,6 @@ class _VolatilityHistoryRow:
     symbol: str
     iv_current: float | None
     hv_current: float | None
-
-
-def _none_if_nan(value: float) -> float | None:
-    return None if np.isnan(value) else float(value)
 
 
 @dataclass(frozen=True)
@@ -166,17 +161,20 @@ class ComputeFeaturePercentilesService:
             for ticker in tickers:
                 raw_value = raw_values_by_ticker[ticker].get(feature_name)
                 history = history_by_ticker_feature.get((ticker, feature_name), [])
-                series = np.array(
-                    [*history, np.nan if raw_value is None else float(raw_value)],
-                    dtype=float,
-                )
-                pct_arr, sample_size_arr = trailing_exclusive_percentile_rank(
-                    series,
-                    window=self.trailing_window_days,
-                    min_sample=self.min_sample_size,
-                )
-                z_arr = trailing_exclusive_zscore(
-                    series,
+                # trailing_exclusive_latest, not the array functions -- this
+                # is called once per (ticker, feature, day), so using the
+                # O(len(history) * window) array functions here (and
+                # discarding everything but the last element) makes a bulk
+                # backfill accidentally O(days^2): day N would redundantly
+                # recompute days 1..N-1's percentiles all over again. This
+                # is the O(window) building block instead -- verified
+                # exactly equivalent to the array functions at the last
+                # index (see test_trailing_exclusive_latest.py).
+                prior_values = np.array(history, dtype=float)
+                current_value = np.nan if raw_value is None else float(raw_value)
+                pct, z, sample_size = trailing_exclusive_latest(
+                    prior_values,
+                    current_value,
                     window=self.trailing_window_days,
                     min_sample=self.min_sample_size,
                 )
@@ -186,10 +184,10 @@ class ComputeFeaturePercentilesService:
                         "trading_date": trading_date,
                         "feature_name": feature_name,
                         "raw_value": raw_value,
-                        "pct_self_252d": _none_if_nan(pct_arr[-1]),
-                        "z_self_252d": _none_if_nan(z_arr[-1]),
+                        "pct_self_252d": pct,
+                        "z_self_252d": z,
                         "pct_xsec": xsec.get(ticker),
-                        "sample_size_self": int(sample_size_arr[-1]),
+                        "sample_size_self": sample_size,
                         "history_tier": FEATURE_HISTORY_TIER[feature_name],
                         "computed_at": computed_at,
                     }

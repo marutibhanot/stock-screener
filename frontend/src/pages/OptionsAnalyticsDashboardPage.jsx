@@ -31,7 +31,7 @@ import UnusualVolumeTable from '../components/OptionsMetrics/UnusualVolumeTable'
 import MetricHistoryChart from '../components/OptionsMetrics/MetricHistoryChart';
 import ExpirationSelector from '../components/OptionsMetrics/ExpirationSelector';
 import LastUpdated from '../components/OptionsMetrics/LastUpdated';
-import PercentileGauge from '../components/OptionsMetrics/PercentileGauge';
+import PercentileGauge, { ordinal } from '../components/OptionsMetrics/PercentileGauge';
 
 // Human-readable label per evaluateMarketFactors() key, shared by the bullet
 // list and the factor-breakdown table so naming never drifts between them.
@@ -67,39 +67,187 @@ const STATUS_TEXT_COLOR = {
 // Plain-language labels matching the exact vocabulary already used
 // elsewhere on this page (SummaryCards.jsx's "💲 Option Prices (IV Rank)",
 // "💰 Option Value (Volatility Risk Premium)") -- the jargon term goes in
-// parentheses for anyone who wants it, the plain phrase leads.
+// parentheses for anyone who wants it, the plain phrase leads. `blurb` is
+// the always-shown "what this bar is" line; status.description (below) is
+// the "what today's specific reading means" line, shown alongside it.
 const FINGERPRINT_FEATURE_META = {
-  ivr: { label: 'Option Prices (Implied Volatility)', lowIsNotable: false },
-  volatility_risk_premium: { label: 'Option Value (Vol Risk Premium)', lowIsNotable: false },
-  total_gex: { label: 'Dealer Stability (Gamma Exposure)', lowIsNotable: true },
+  ivr: {
+    label: 'Option Prices (Implied Volatility)',
+    lowIsNotable: false,
+    blurb: 'How expensive options on this stock are today, compared to every other stock -- higher usually means traders expect bigger price moves.',
+  },
+  volatility_risk_premium: {
+    label: 'Option Value (Vol Risk Premium)',
+    lowIsNotable: false,
+    blurb: "Whether options here are priced rich or cheap relative to how much the stock has actually been moving, compared to every other stock.",
+  },
+  total_gex: {
+    label: 'Dealer Stability (Gamma Exposure)',
+    lowIsNotable: true,
+    blurb: 'Whether option dealers here are more likely to calm price swings down or make them worse, compared to every other stock.',
+  },
   // Sourced from external_volatility_history (real coverage back to
   // 2019-02-09), unlike the other three (options_metrics_snapshots/
   // gex_snapshots, live since 2026-08) -- this is the dimension The
   // Horizon's historical-analog search can actually use for real depth
   // right now. See DEEP_FINGERPRINT_FEATURES in horizon.py.
-  iv_hv_spread: { label: 'Option Value, Long History (IV vs. Historical Vol)', lowIsNotable: false },
+  iv_hv_spread: {
+    label: 'Option Value, Long History (IV vs. Historical Vol)',
+    lowIsNotable: false,
+    blurb: 'Same idea as Option Value above, using our longest-running and most complete price history.',
+  },
 };
 
-// Percentile -> status label/color, one convention shared by every
-// PercentileGauge on this page -- <20th/>80th are the "notable" tails
-// (matching SummaryCards.jsx's ivr<20/ivr>80 thresholds), direction of
-// which tail means what set by FINGERPRINT_FEATURE_META.lowIsNotable.
-// Labels reuse the same plain wording as SummaryCards.jsx's getMetricStatus
-// (Cheap/Expensive/Fair) and getGexNarrative (shock absorber / amplifies
-// moves), not raw statistics jargon.
+// Percentile -> status label/color/plain-English meaning, one convention
+// shared by every PercentileGauge on this page -- <20th/>80th are the
+// "notable" tails (matching SummaryCards.jsx's ivr<20/ivr>80 thresholds),
+// direction of which tail means what set by FINGERPRINT_FEATURE_META.lowIsNotable.
+// Descriptions reuse the same plain wording as SummaryCards.jsx's
+// getMetricStatus (Cheap/Expensive/Fair) and getGexNarrative (shock
+// absorber / amplifies moves) -- written fresh here because this is a
+// CROSS-SECTIONAL comparison (vs. every other stock today), not the
+// self-history comparison those other cards make.
 const getPercentileStatus = (featureKey, pct) => {
   if (pct == null || Number.isNaN(Number(pct))) return null;
   const meta = FINGERPRINT_FEATURE_META[featureKey];
   if (!meta) return null;
   const num = Number(pct);
+
   if (meta.lowIsNotable) {
-    if (num < 20) return { label: 'Fragile (Can Amplify Swings)', color: 'error' };
-    if (num > 80) return { label: 'Stable (Calms Swings)', color: 'success' };
-    return { label: 'Balanced', color: 'default' };
+    if (num < 20) {
+      return {
+        label: 'Fragile (Can Amplify Swings)',
+        color: 'error',
+        description:
+          'Dealers here are more likely to add fuel to price swings than calm them down, more so than at ' +
+          'almost any other stock today -- expect the potential for sharper, faster moves.',
+      };
+    }
+    if (num > 80) {
+      return {
+        label: 'Stable (Calms Swings)',
+        color: 'success',
+        description:
+          'Dealers here are more likely to act like a shock absorber and calm price swings, more so than at ' +
+          'almost any other stock today.',
+      };
+    }
+    return {
+      label: 'Balanced',
+      color: 'default',
+      description: "Dealer positioning here isn't pushing strongly in either direction, similar to most other stocks today.",
+    };
   }
-  if (num > 80) return { label: 'Expensive', color: 'warning' };
-  if (num < 20) return { label: 'Cheap', color: 'success' };
-  return { label: 'Fair', color: 'default' };
+
+  if (num > 80) {
+    return {
+      label: 'Expensive',
+      color: 'warning',
+      description:
+        featureKey === 'ivr'
+          ? 'Options on this stock cost more right now than on almost every other stock -- traders are paying ' +
+            'up for protection or expecting a bigger move here specifically.'
+          : "Options here look pricier than the stock's actual recent movements would justify, more so than " +
+            'most other stocks today -- a possible edge for sellers of options.',
+    };
+  }
+  if (num < 20) {
+    return {
+      label: 'Cheap',
+      color: 'success',
+      description:
+        featureKey === 'ivr'
+          ? "Options on this stock are unusually inexpensive right now compared to other stocks -- the market " +
+            "isn't expecting much movement here."
+          : "Options here look cheaper than the stock's actual recent movements would justify, more so than " +
+            'most other stocks today -- a possible edge for buyers of options.',
+    };
+  }
+  return {
+    label: 'Fair',
+    color: 'default',
+    description:
+      featureKey === 'ivr'
+        ? 'Option prices here are in the normal range compared to other stocks today.'
+        : 'Option pricing here roughly matches how much this stock has actually been moving, similar to most ' +
+          'other stocks today.',
+  };
+};
+
+// Idiosyncratic-vs-macro read: is this stock's reading unusual because the
+// WHOLE MARKET is unusual today (e.g. broad fear before a Fed decision), or
+// because something specific to this stock is going on (earnings, news)?
+// A >20-point gap is the threshold for calling it out; smaller gaps read
+// as noise rather than a real divergence from the market.
+const getRelativeValueNote = (tickerPct, benchmarkPct, benchmarkTicker) => {
+  if (tickerPct == null || benchmarkPct == null) return null;
+  const gap = tickerPct - benchmarkPct;
+  if (Math.abs(gap) < 20) {
+    return (
+      `The broader market (${benchmarkTicker}) is at a similar level (${ordinal(benchmarkPct)} pct) -- this ` +
+      'looks like a market-wide pattern, not something specific to this stock.'
+    );
+  }
+  if (gap > 0) {
+    return (
+      `The broader market (${benchmarkTicker}) is much lower (${ordinal(benchmarkPct)} pct) -- this looks ` +
+      'specific to this stock, not a market-wide move.'
+    );
+  }
+  return (
+    `The broader market (${benchmarkTicker}) is actually higher (${ordinal(benchmarkPct)} pct) -- this stock ` +
+    'is calmer than the overall market right now.'
+  );
+};
+
+// Synthesizes every available gauge into one plain-English "so what"
+// sentence -- purely derived from the same real percentile numbers shown
+// above (a simple +1/0/-1 vote per gauge, same spirit as Executive
+// Summary's weighted-factor score below), never a separate invented
+// judgment.
+const getWeatherConclusion = (fingerprint) => {
+  const entries = Object.entries(fingerprint || {}).filter(([key]) => FINGERPRINT_FEATURE_META[key]);
+  if (entries.length === 0) return null;
+
+  let score = 0; // positive = calmer/cheaper than usual, negative = more turbulent/expensive than usual
+  entries.forEach(([key, pct]) => {
+    const meta = FINGERPRINT_FEATURE_META[key];
+    const num = Number(pct);
+    const high = num > 80;
+    const low = num < 20;
+    if (meta.lowIsNotable) {
+      if (low) score -= 1;
+      else if (high) score += 1;
+    } else if (high) {
+      score -= 1;
+    } else if (low) {
+      score += 1;
+    }
+  });
+
+  if (score <= -2) {
+    return (
+      "Overall: today's options pricing here looks unusually rich, and dealers are positioned in a way that " +
+      'can amplify moves rather than calm them -- a setup that could see bigger, faster swings than most ' +
+      'stocks right now.'
+    );
+  }
+  if (score === -1) {
+    return (
+      'Overall: a couple of readings here are running hotter than usual compared to other stocks -- worth ' +
+      'keeping an eye on, though nothing extreme yet.'
+    );
+  }
+  if (score >= 2) {
+    return (
+      "Overall: today's options pricing here looks unusually calm and inexpensive, and dealers are positioned " +
+      'to smooth out price swings -- a quieter setup than most stocks right now.'
+    );
+  }
+  if (score === 1) {
+    return 'Overall: readings here lean a bit calmer than usual compared to other stocks, though nothing dramatic.';
+  }
+  return "Overall: nothing about today's options pricing here stands out much compared to other stocks -- a fairly ordinary setup.";
 };
 
 // Signal label/emoji for a factor's vote -- "Slightly" qualifies factors
@@ -1543,12 +1691,30 @@ export default function OptionsAnalyticsDashboardPage() {
                   if (pct == null) return null;
                   return (
                     <Grid item xs={12} md={4} key={key}>
-                      <PercentileGauge label={meta.label} percentile={pct} status={getPercentileStatus(key, pct)} />
+                      <PercentileGauge
+                        label={meta.label}
+                        percentile={pct}
+                        status={getPercentileStatus(key, pct)}
+                        blurb={meta.blurb}
+                        comparisonNote={getRelativeValueNote(
+                          pct,
+                          horizonData.benchmark_fingerprint?.[key],
+                          horizonData.benchmark_ticker || 'SPY'
+                        )}
+                      />
                     </Grid>
                   );
                 })}
               </Grid>
-              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+              {(() => {
+                const conclusion = getWeatherConclusion(horizonData.fingerprint);
+                return conclusion ? (
+                  <Typography variant="body2" sx={{ mt: 1, fontWeight: 600 }}>
+                    {conclusion}
+                  </Typography>
+                ) : null;
+              })()}
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1.5 }}>
                 Compared against every other stock on {horizonData.as_of_date}, using each day&apos;s
                 nearest options expiration -- not the expiration you picked above.
               </Typography>

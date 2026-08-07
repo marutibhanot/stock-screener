@@ -381,7 +381,12 @@ def _nearest_option_row(df: pd.DataFrame, underlying_price: float) -> Optional[p
     return df.loc[idx]
 
 
-def _compute_historical_volatility(history: pd.DataFrame) -> Optional[float]:
+def _compute_historical_volatility(history: pd.DataFrame, window: int = 20) -> Optional[float]:
+    """Annualized realized volatility over the trailing `window` trading
+    days (log returns, population std). Default window=20 matches the
+    existing "20-day realized volatility" behavior; see
+    _compute_realized_vol_term_structure() for the 10/20/60-day comparison.
+    """
     if history is None or history.empty or "Close" not in history.columns:
         return None
 
@@ -389,12 +394,28 @@ def _compute_historical_volatility(history: pd.DataFrame) -> Optional[float]:
     if closes.shape[0] < 2:
         return None
 
-    closes = closes.tail(21)
+    closes = closes.tail(window + 1)
     returns = closes.pct_change().dropna().apply(math.log1p)
     if returns.empty:
         return None
 
     return float(returns.std(ddof=0) * math.sqrt(252))
+
+
+REALIZED_VOL_TERM_STRUCTURE_WINDOWS: tuple[int, ...] = (10, 20, 60)
+
+
+def _compute_realized_vol_term_structure(history: pd.DataFrame) -> dict[str, Optional[float]]:
+    """10/20/60-day realized volatility, side by side -- lets a reader see
+    whether the stock's actual movement is accelerating into a squeeze or
+    decaying, which puts the (separately computed) implied-vol term
+    structure into context. Any window with insufficient closes returns
+    None for that key rather than silently falling back to a shorter one.
+    """
+    return {
+        f"realized_vol_{window}d": _compute_historical_volatility(history, window=window)
+        for window in REALIZED_VOL_TERM_STRUCTURE_WINDOWS
+    }
 
 
 def _norm_pdf(x: float) -> float:
@@ -780,14 +801,23 @@ def calculate_options_metrics(
     calls = option_chain.calls if hasattr(option_chain, "calls") else pd.DataFrame()
     puts = option_chain.puts if hasattr(option_chain, "puts") else pd.DataFrame()
 
-    history = svc.get_historical_data(ticker, period="1mo", interval="1d", use_cache=False)
+    # 3mo, not 1mo -- the 60-day window in _compute_realized_vol_term_structure
+    # needs at least 60 trading days of closes (~63 calendar-adjusted in a
+    # 3-month pull); 1mo only ever had enough for the 20-day figure. Same
+    # single live yfinance call either way, just a larger response, so this
+    # doesn't add rate-limit exposure.
+    history = svc.get_historical_data(ticker, period="3mo", interval="1d", use_cache=False)
     underlying_price = None
     historical_volatility = None
+    realized_vol_term_structure: dict[str, Optional[float]] = {
+        f"realized_vol_{window}d": None for window in REALIZED_VOL_TERM_STRUCTURE_WINDOWS
+    }
     if history is not None and not history.empty and "Close" in history.columns:
         closes = history["Close"].dropna()
         if not closes.empty:
             underlying_price = _safe_float(closes.iloc[-1])
             historical_volatility = _compute_historical_volatility(history)
+            realized_vol_term_structure = _compute_realized_vol_term_structure(history)
 
     if underlying_price is None or underlying_price == 0.0:
         info = getattr(yf_ticker, "info", {}) or {}
@@ -973,6 +1003,7 @@ def calculate_options_metrics(
         "expiration": expiration,
         "underlying_price": underlying_price,
         "historical_volatility": historical_volatility,
+        **realized_vol_term_structure,
         "current_atm_iv": current_atm_iv,
         "volatility_risk_premium": volatility_risk_premium,
         "expected_move": expected_move,

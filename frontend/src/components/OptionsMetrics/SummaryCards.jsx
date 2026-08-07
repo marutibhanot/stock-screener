@@ -118,6 +118,8 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
     ivr,
     skew,
     historical_volatility,
+    realized_vol_10d,
+    realized_vol_60d,
     volatility_risk_premium,
     expected_move,
     call_premium_notional,
@@ -133,7 +135,28 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
   const isModelDerivedGreeks = greeks_methodology === 'black_scholes_derived';
 
   const historicalVolatilityPct = historical_volatility != null ? historical_volatility * 100 : null;
+  const realizedVol10dPct = realized_vol_10d != null ? realized_vol_10d * 100 : null;
+  const realizedVol60dPct = realized_vol_60d != null ? realized_vol_60d * 100 : null;
   const volatilityRiskPremiumPct = volatility_risk_premium != null ? volatility_risk_premium * 100 : null;
+
+  // Plain-language read of the realized-vol term structure (10d vs 20d vs
+  // 60d) -- lets a reader see whether the stock's actual movement is
+  // speeding up into a squeeze or settling down, independent of the
+  // separately-shown Implied Volatility Term Structure chart. A >20%
+  // relative gap is the threshold for calling it out; smaller gaps read as
+  // noise rather than a real regime shift.
+  const getRealizedVolTrendNote = () => {
+    if (realizedVol10dPct == null || historicalVolatilityPct == null) return null;
+    if (historicalVolatilityPct === 0) return null;
+    const shortVsMid = (realizedVol10dPct - historicalVolatilityPct) / historicalVolatilityPct;
+    if (shortVsMid > 0.2) {
+      return 'The stock has been moving noticeably more in the last 10 days than its recent average -- price action is speeding up.';
+    }
+    if (shortVsMid < -0.2) {
+      return 'The stock has been moving noticeably less in the last 10 days than its recent average -- price action is settling down.';
+    }
+    return 'Recent price movement has been fairly steady -- no clear speeding up or settling down.';
+  };
 
   const invalidSameStrikeLevels = Boolean(
     key_levels?.call_wall != null &&
@@ -507,6 +530,15 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
           value={historicalVolatilityPct != null ? `${historicalVolatilityPct.toFixed(1)}%` : '—'}
           subtitle="20-day realized volatility"
           status={getMetricStatus('historical_volatility', historicalVolatilityPct)}
+          notes={
+            realizedVol10dPct != null || realizedVol60dPct != null
+              ? [
+                  `Last 10 days: ${realizedVol10dPct != null ? `${realizedVol10dPct.toFixed(1)}%` : '—'}`,
+                  `Last 60 days: ${realizedVol60dPct != null ? `${realizedVol60dPct.toFixed(1)}%` : '—'}`,
+                  getRealizedVolTrendNote(),
+                ].filter(Boolean)
+              : undefined
+          }
         />
       </Grid>
       <Grid item xs={12} sm={6} md={4} lg={3}>

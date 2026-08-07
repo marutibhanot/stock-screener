@@ -41,7 +41,7 @@ codebase does not have.
 from __future__ import annotations
 
 import statistics
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Protocol
 
@@ -105,6 +105,13 @@ class HorizonResult:
     tolerance_pct: float
     horizons: dict[int, HorizonStats]
     reason: str | None = None
+    # Same-day fingerprint for benchmark_ticker (default SPY), so a caller
+    # can tell "this stock's IV is at the 90th pct" apart from "the whole
+    # market is at the 90th pct today" -- idiosyncratic vs. macro. Empty
+    # dict (not None) when the benchmark has no reading for as_of_date,
+    # same convention as `fingerprint` itself.
+    benchmark_ticker: str = "SPY"
+    benchmark_fingerprint: dict[str, float] = field(default_factory=dict)
 
 
 def compute_horizon(
@@ -116,14 +123,20 @@ def compute_horizon(
     tolerance_pct: float = DEFAULT_TOLERANCE_PCT,
     horizons: tuple[int, ...] = HORIZON_TRADING_DAYS,
     calendar_service: TradingDayRange | None = None,
+    benchmark_ticker: str = "SPY",
 ) -> HorizonResult:
     """Compute Horizon stats for one ticker.
 
     `as_of_date` defaults to the ticker's most recent feature_percentiles
     trading_date. `calendar_service` defaults to a real MarketCalendarService
-    -- overridable for tests.
+    -- overridable for tests. `benchmark_ticker`'s same-day fingerprint is
+    always attached (when available) so a caller can distinguish "this
+    stock is unusual" from "the whole market is unusual today" -- pass
+    ticker == benchmark_ticker (e.g. asking for SPY itself) to get an empty
+    benchmark_fingerprint back, not a self-comparison.
     """
     ticker = ticker.upper()
+    benchmark_ticker = benchmark_ticker.upper()
     if calendar_service is None:
         from app.services.market_calendar_service import MarketCalendarService
 
@@ -140,7 +153,12 @@ def compute_horizon(
                 tolerance_pct=tolerance_pct,
                 horizons={},
                 reason="no_feature_percentiles_for_ticker",
+                benchmark_ticker=benchmark_ticker,
             )
+
+    benchmark_fingerprint = (
+        _load_fingerprint(db, benchmark_ticker, as_of_date) if benchmark_ticker != ticker else {}
+    )
 
     fingerprint = _load_fingerprint(db, ticker, as_of_date)
     if not fingerprint:
@@ -152,6 +170,8 @@ def compute_horizon(
             tolerance_pct=tolerance_pct,
             horizons={},
             reason="no_pct_xsec_values_for_fingerprint_features",
+            benchmark_ticker=benchmark_ticker,
+            benchmark_fingerprint=benchmark_fingerprint,
         )
 
     # Two independent searches, unioned -- NOT one intersection across every
@@ -187,6 +207,8 @@ def compute_horizon(
         fingerprint=fingerprint,
         tolerance_pct=tolerance_pct,
         horizons=horizon_stats,
+        benchmark_ticker=benchmark_ticker,
+        benchmark_fingerprint=benchmark_fingerprint,
     )
 
 

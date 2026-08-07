@@ -37,17 +37,31 @@ def _build_parser() -> argparse.ArgumentParser:
 
 
 def execute_backfill(options: argparse.Namespace) -> dict:
+    calendar_service = MarketCalendarService()
     service = ComputeFeaturePercentilesService(
         session_factory=SessionLocal,
-        calendar_service=MarketCalendarService(),
+        calendar_service=calendar_service,
         trailing_window_days=settings.feature_percentiles_trailing_window_days,
         min_sample_size=settings.feature_percentiles_min_sample_size,
     )
-    results = service.backfill(
-        start_date=options.start_date,
-        through_date=options.through_date,
-        market=options.market,
+    # Long-running backfills (years of trading days) need per-date visibility
+    # in the log as they run, not just a final summary once everything is
+    # done -- so this iterates and prints one date at a time rather than
+    # calling service.backfill() and waiting for the whole list back.
+    trading_dates = calendar_service.trading_days(
+        options.market, options.start_date, options.through_date
     )
+    results = []
+    total = len(trading_dates)
+    for i, trading_date in enumerate(trading_dates, start=1):
+        result = service.compute_for_date(trading_date)
+        results.append(result)
+        print(
+            f"[{i}/{total}] {trading_date.isoformat()} {result.status.value} "
+            f"tickers={result.tickers_processed} rows={result.rows_written} "
+            f"reason={result.reason} error={result.error}",
+            flush=True,
+        )
     return {
         "market": options.market,
         "start_date": options.start_date.isoformat(),

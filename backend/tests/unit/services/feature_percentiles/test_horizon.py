@@ -274,3 +274,53 @@ class TestComputeHorizonWithMatches:
         assert result.fingerprint == {"ivr": 90.0, "iv_hv_spread": 70.0}
         assert result.horizons[5].sample_size == 1
         assert result.horizons[5].median_return_pct == pytest.approx(10.0)
+
+
+class TestBenchmarkFingerprint:
+    def test_attaches_benchmark_same_day_fingerprint(self, session_factory):
+        db = session_factory()
+        as_of = date(2026, 8, 7)
+
+        db.add(_fp_row("AAPL", as_of, "ivr", 90.0))
+        db.add(_fp_row("SPY", as_of, "ivr", 45.0))
+        db.commit()
+
+        result = compute_horizon(db, "AAPL", as_of_date=as_of, calendar_service=_AllWeekdaysCalendar())
+
+        assert result.benchmark_ticker == "SPY"
+        assert result.benchmark_fingerprint == {"ivr": 45.0}
+
+    def test_benchmark_empty_when_no_reading_that_day(self, session_factory):
+        db = session_factory()
+        as_of = date(2026, 8, 7)
+        db.add(_fp_row("AAPL", as_of, "ivr", 90.0))
+        db.commit()
+
+        result = compute_horizon(db, "AAPL", as_of_date=as_of, calendar_service=_AllWeekdaysCalendar())
+
+        assert result.benchmark_fingerprint == {}
+
+    def test_requesting_the_benchmark_itself_gets_no_self_comparison(self, session_factory):
+        db = session_factory()
+        as_of = date(2026, 8, 7)
+        db.add(_fp_row("SPY", as_of, "ivr", 45.0))
+        db.commit()
+
+        result = compute_horizon(db, "SPY", as_of_date=as_of, calendar_service=_AllWeekdaysCalendar())
+
+        assert result.ticker == "SPY"
+        assert result.benchmark_fingerprint == {}
+
+    def test_custom_benchmark_ticker(self, session_factory):
+        db = session_factory()
+        as_of = date(2026, 8, 7)
+        db.add(_fp_row("AAPL", as_of, "ivr", 90.0))
+        db.add(_fp_row("QQQ", as_of, "ivr", 60.0))
+        db.commit()
+
+        result = compute_horizon(
+            db, "AAPL", as_of_date=as_of, calendar_service=_AllWeekdaysCalendar(), benchmark_ticker="qqq"
+        )
+
+        assert result.benchmark_ticker == "QQQ"
+        assert result.benchmark_fingerprint == {"ivr": 60.0}

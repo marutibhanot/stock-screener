@@ -9,7 +9,7 @@ const STATUS_TEXT_COLOR = {
   default: 'text.secondary',
 };
 
-function ordinal(n) {
+export function ordinal(n) {
   const rounded = Math.round(n);
   const mod100 = rounded % 100;
   if (mod100 >= 11 && mod100 <= 13) return `${rounded}th`;
@@ -32,7 +32,7 @@ function ordinal(n) {
  * feature_percentiles doesn't have yet); see the "cross-sectional" label
  * on the parent section.
  */
-export default function PercentileGauge({ label, percentile, status }) {
+export default function PercentileGauge({ label, percentile, status, blurb, comparisonNote }) {
   const hasValue = percentile != null && !Number.isNaN(Number(percentile));
   const color = status ? STATUS_TEXT_COLOR[status.color] || 'text.secondary' : 'text.secondary';
 
@@ -57,6 +57,24 @@ export default function PercentileGauge({ label, percentile, status }) {
           '& .MuiLinearProgress-bar': { backgroundColor: color, borderRadius: 1 },
         }}
       />
+      {/* What-this-is (always shown) + what-today's-reading-means (only when
+          we have a status to explain), matching SummaryCards.jsx's
+          subtitle + "What this means:" convention. */}
+      {blurb && (
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+          {blurb}
+        </Typography>
+      )}
+      {status?.description && (
+        <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
+          <strong>What this means:</strong> {status.description}
+        </Typography>
+      )}
+      {comparisonNote && (
+        <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary', fontStyle: 'italic' }}>
+          {comparisonNote}
+        </Typography>
+      )}
     </Box>
   );
 }
