@@ -6,6 +6,7 @@ Uses in-memory fakes from conftest.py — no DB, no mocks, pure behaviour tests.
 from __future__ import annotations
 
 import inspect
+from concurrent.futures import Future
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -886,13 +887,6 @@ class TestBulkDataPreparation:
                     "current_price": 100.0,
                 }
 
-        class _FakeFuture:
-            def __init__(self, result):
-                self._result = result
-
-            def result(self):
-                return self._result
-
         class _FakeProcessPoolExecutor:
             instances: list["_FakeProcessPoolExecutor"] = []
 
@@ -905,7 +899,12 @@ class TestBulkDataPreparation:
 
             def submit(self, fn, *args):
                 self.submitted.append((fn, args))
-                return _FakeFuture(fn(*args))
+                # A real Future, not a bare stand-in -- as_completed() reaches
+                # into Future-internal state (_condition) that only a real
+                # instance provides.
+                future: Future = Future()
+                future.set_result(fn(*args))
+                return future
 
             def shutdown(self, wait=True, cancel_futures=False):
                 self.shutdown_called = True

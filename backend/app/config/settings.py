@@ -396,6 +396,10 @@ class Settings(BaseSettings):
     feature_snapshot_stale_after_minutes: int = 240  # Running feature runs older than this are treated as stale and failed
     feature_metadata_repair_batch_size: int = 500  # Rows per batch when repairing published feature-run metadata
 
+    # Feature normalization layer (feature_percentiles) configuration
+    feature_percentiles_trailing_window_days: int = 252  # Trailing trading-day window for self percentile/z-score
+    feature_percentiles_min_sample_size: int = 60  # Below this many trailing observations, pct_self_252d/z_self_252d are NULL (sample_size_self is still recorded)
+
     # Cache Configuration
     cache_redis_db: int = 2  # Separate DB for cache data
     cache_ttl_seconds: int = 604800  # 7 days (fundamentals change slowly)

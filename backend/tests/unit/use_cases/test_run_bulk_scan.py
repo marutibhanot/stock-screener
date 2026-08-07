@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import date
 import time
-from concurrent.futures import ThreadPoolExecutor as RealThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor as RealThreadPoolExecutor
 from threading import Lock
 
 import pytest
@@ -873,13 +873,6 @@ class TestRunBulkScanHappyPath:
             }
         )
 
-        class _FakeFuture:
-            def __init__(self, result):
-                self._result = result
-
-            def result(self):
-                return self._result
-
         class _FakeProcessPoolExecutor:
             instances: list["_FakeProcessPoolExecutor"] = []
 
@@ -892,7 +885,12 @@ class TestRunBulkScanHappyPath:
 
             def submit(self, fn, *args):
                 self.submitted.append((fn, args))
-                return _FakeFuture(fn(*args))
+                # A real Future, not a bare stand-in -- as_completed() reaches
+                # into Future-internal state (_condition) that only a real
+                # instance provides.
+                future: Future = Future()
+                future.set_result(fn(*args))
+                return future
 
             def shutdown(self, wait=True, cancel_futures=False):
                 self.shutdown_called = True
