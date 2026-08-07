@@ -117,6 +117,13 @@ SCHEDULED_TASKS = {
         'manual_dispatch_kwargs': {'market': 'US', 'limit': 2000},
         'manual_dispatch_options': {'queue': data_fetch_queue_for_market('US')},
     },
+    'daily-feature-percentiles': {
+        'task_function': 'app.tasks.feature_percentile_tasks.compute_daily',
+        'display_name': 'Daily Feature Percentiles',
+        'description': 'Normalizes options metrics (IVR, skew, GEX, IV-HV spread, ...) into trailing-252-day self and same-day cross-sectional percentiles',
+        'schedule_description': '7:30 PM ET daily -- fixed time, not chained (the options pipeline above fans out per-symbol with no completion signal to chain from); trigger here to run manually for today, or use the backfill CLI for a date range',
+        'manual_dispatch_options': {'queue': 'celery'},
+    },
 
     # ===== FRIDAY =====
     'weekly-fundamental-refresh': {
