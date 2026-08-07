@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import numpy as np
 import pandas as pd
 
 from app.analysis.patterns.config import SetupEngineParameters
@@ -222,10 +223,16 @@ def _find_tight_runs(
     weekly: pd.DataFrame,
     parameters: SetupEngineParameters,
 ) -> list[_TightRun]:
-    closes = weekly["Close"]
-    highs = weekly["High"]
-    lows = weekly["Low"]
-    volumes = weekly["Volume"]
+    # Plain numpy arrays instead of repeated pandas Series.iloc slicing +
+    # .median()/.max()/.mean() calls inside the double loop below: pandas'
+    # per-call overhead (index alignment, dtype checks) dominates at these
+    # tiny (3-8 element) window sizes, not the actual arithmetic. Same
+    # control flow and nan-skipping semantics as before, just cheaper
+    # primitives — this loop runs ~6x per weekly bar per symbol.
+    closes = weekly["Close"].to_numpy(dtype=float)
+    highs = weekly["High"].to_numpy(dtype=float)
+    lows = weekly["Low"].to_numpy(dtype=float)
+    volumes = weekly["Volume"].to_numpy(dtype=float)
     n = len(weekly)
     runs: list[_TightRun] = []
 
@@ -239,34 +246,32 @@ def _find_tight_runs(
     for weeks_tight in range(_MIN_WEEKS_TIGHT, _MAX_WEEKS_TIGHT + 1):
         for end_idx in range(weeks_tight - 1, n):
             start_idx = end_idx - weeks_tight + 1
-            close_window = closes.iloc[start_idx : end_idx + 1]
-            high_window = highs.iloc[start_idx : end_idx + 1]
-            low_window = lows.iloc[start_idx : end_idx + 1]
+            close_window = closes[start_idx : end_idx + 1]
+            high_window = highs[start_idx : end_idx + 1]
+            low_window = lows[start_idx : end_idx + 1]
 
-            median_close = float(close_window.median())
+            median_close = float(np.nanmedian(close_window))
             if median_close <= 0.0:
                 continue
 
             tight_band_pct = float(
-                (
-                    (close_window - median_close).abs() / median_close
-                ).max()
+                np.nanmax(np.abs(close_window - median_close)) / median_close
                 * 100.0
             )
             tight_range_pct = float(
-                ((high_window.max() - low_window.min()) / median_close) * 100.0
+                (np.nanmax(high_window) - np.nanmin(low_window)) / median_close * 100.0
             )
 
             if start_idx >= 10:
-                prior_10w = float(volumes.iloc[start_idx - 10 : start_idx].mean())
-                run_vol = float(volumes.iloc[start_idx : end_idx + 1].mean())
+                prior_10w = float(np.nanmean(volumes[start_idx - 10 : start_idx]))
+                run_vol = float(np.nanmean(volumes[start_idx : end_idx + 1]))
                 vol_vs_10w = (run_vol / prior_10w) if prior_10w > 0 else None
             else:
                 vol_vs_10w = None
 
-            pivot_offset = int(high_window.to_numpy(dtype=float).argmax())
+            pivot_offset = int(np.argmax(high_window))
             pivot_idx = start_idx + pivot_offset
-            pivot_price = float(highs.iat[pivot_idx])
+            pivot_price = float(highs[pivot_idx])
             recency_weeks = n - 1 - end_idx
 
             if tight_band_pct <= strict_threshold:
