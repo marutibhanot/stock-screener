@@ -390,8 +390,8 @@ class Settings(BaseSettings):
     scan_usecase_chunk_size: int = 50  # Larger local-default chunks improve scan throughput on the shared worker
     static_snapshot_chunk_size: int = 100  # Larger chunk size for CI/static batch processing
     static_snapshot_parallel_workers: int = 8  # Bounded symbol-level parallelism for static batch processing
-    static_snapshot_use_process_pool: bool = True  # Run static-snapshot symbol scans in worker processes instead of threads so CPU-bound detectors bypass the GIL
-    scan_usecase_use_process_pool: bool = True  # Same fix as static_snapshot_use_process_pool, for cache-only manual bulk scans (run_bulk_scan.py)
+    static_snapshot_use_process_pool: bool = False  # DISABLED: ProcessPoolExecutor cannot be spawned from a Celery --pool=prefork worker ("daemonic processes are not allowed to have children"). Needs a Celery worker-pool change (e.g. --pool=solo for these queues) before re-enabling. See scanner_factory in build_daily_snapshot.py.
+    scan_usecase_use_process_pool: bool = False  # DISABLED: same daemonic-process blocker as static_snapshot_use_process_pool, confirmed in production on 2026-08-07 (run_bulk_scan.py)
     feature_snapshot_soft_time_limit_seconds: int = 10800  # 3h budget for full ALL-universe daily snapshot in Docker/Postgres
     feature_snapshot_stale_after_minutes: int = 240  # Running feature runs older than this are treated as stale and failed
     feature_metadata_repair_batch_size: int = 500  # Rows per batch when repairing published feature-run metadata
