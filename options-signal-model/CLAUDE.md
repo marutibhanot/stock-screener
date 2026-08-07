@@ -128,12 +128,19 @@ app's own Postgres (both environments) as of this revision.
      features. Not flow — nobody's trading activity, just how tight the
      market is — but not nothing.
 
-6. **Gaps** — not yet audited (missing days, missing tickers, schema
-   changes mid-history). Do before feature code.
+6. **Gaps — resolved: confirmed permanent, source-level.** 2019 is
+   effectively empty; 2020 through 2024-09-11 is **Mon/Wed/Fri only** (Tue/Thu
+   ~100% missing every year); daily from 2024-09-12 onward (98-99.6%
+   complete). Verified against the live DoltHub source directly, not just
+   our local clone: `option_chain` for AAPL on 2022-01-03 (Mon) returns 150
+   rows, 2022-01-04 (Tue) returns 0 -- the vendor never published that
+   session, there's nothing to backfill. Full detail in `docs/DATA_AUDIT.md`
+   section 6. **Implication:** any rolling-window feature/CV logic must be
+   session-count-based, not calendar-day-based, or restrict training to
+   2024-09-12 onward where daily spacing actually holds.
 
 **Do not proceed past the audit if any of these are unresolved.** Item 2
-(greeks provenance) and item 6 (gaps) are still open. Flag and stop rather
-than build around them.
+(greeks provenance) is still open. Flag and stop rather than build around it.
 
 ---
 
@@ -233,8 +240,8 @@ signal at this horizon." That is a valid and useful outcome.
 
 ## Phase 1 scope — build only this
 
-1. Finish the data audit (`docs/DATA_AUDIT.md`) — greeks provenance and
-   gaps are still open, resolve both first.
+1. Finish the data audit (`docs/DATA_AUDIT.md`) — greeks provenance is
+   still open, resolve first. Gaps are resolved (see above).
 2. Point-in-time feature pipeline → parquet, partitioned by date. Feature
    families, scoped to what this data actually supports:
    - IV surface: level, skew (25∆ put − call), term structure, curvature

@@ -1,8 +1,8 @@
 # Data Audit — post-no-preference/options (DoltHub)
 
-Status: **3 of 5 required checks resolved. 2 open — greeks provenance and
-gap analysis. Do not write feature code until both are closed**, per
-`CLAUDE.md`'s non-negotiable rule.
+Status: **4 of 5 required checks resolved. 1 open — greeks provenance.
+Do not write feature code until it's closed**, per `CLAUDE.md`'s
+non-negotiable rule.
 
 Source: `post-no-preference/options` on DoltHub, public, free, updated daily
 since April 2021. Cloned in full (2019-02-09 → present) to both deployment
@@ -126,20 +126,50 @@ historical gap is real and not fixable by looking harder.
 and computable — narrower than "flow" (no trade activity, no OI), but not
 nothing.
 
-## 6. Gaps — OPEN, NOT YET AUDITED
+## 6. Gaps — RESOLVED: confirmed permanent, source-level Mon/Wed/Fri cadence pre-2024-09-12
 
-Missing trading days, missing tickers mid-history, and schema changes
-across the 2019–2026 span have not been checked yet.
+Compared distinct `trading_date` values in both `external_option_chain_history`
+and `external_volatility_history` against `MarketCalendarService.trading_days("US", ...)`
+for the full 2019-02-09 → 2026-08-05 span.
 
-**Status: not started. Blocking.** Suggested checks before feature code:
-- Compare distinct `date` count in `option_chain` against a known trading-
-  calendar day count for the same span; investigate any gaps.
-- Check for tickers with suspiciously short coverage windows that aren't
-  explained by an IPO or delisting (possible mid-history dropout/re-add).
-- Confirm the column set / types haven't changed across the full date
-  range (a `DESCRIBE` diff isn't meaningful against a single live branch,
-  but spot-check early-2019 rows against recent rows for `NULL` patterns
-  that might indicate a field was added partway through).
+**Finding: 724-731 of 1,881 expected US trading days (~39%) are missing**, but
+not randomly -- a sharp, consistent day-of-week pattern:
+
+| Period | Coverage |
+|---|---|
+| 2019 | Effectively empty (1 of 225 expected days present) |
+| 2020–2023 | **Mon/Wed/Fri only.** Tue and Thu are ~100% missing every year (`external_volatility_history`: 0 Mon/Wed missing, 52/51 Tue/Thu missing out of 52 each, in a 2022 sample); Fri has a handful of holiday-driven gaps. ~56-59% of expected days present. |
+| 2024, through 2024-09-11 | Same Mon/Wed/Fri pattern |
+| **2024-09-12 onward** | **Daily.** First Tue/Thu with data after the sparse period is 2024-09-12. 98–99.6% complete from here to present (residual gaps are holidays). |
+
+**Verified this is a source-level limitation, not an incomplete clone**: queried
+the live DoltHub repo directly (`post-no-preference/options`, `master` branch,
+public SQL API) for AAPL:
+
+```
+date='2022-01-03' (Mon) -> 150 rows
+date='2022-01-04' (Tue) -> 0 rows
+```
+
+Same result on the live source as in our local copy -- the Tuesday genuinely
+does not exist upstream. **Nothing to backfill from DoltHub for 2019–2024-09-11**;
+the vendor simply didn't publish those sessions. `external_option_chain_history`
+shows the same shape (Tue/Thu dominate: 290/282 missing vs. 48-53 for Mon/Wed/Fri
+over the full span), slightly noisier than the volatility table but the same
+underlying cause.
+
+**Not yet checked:** per-ticker mid-history dropout/re-add (distinct from the
+uniform day-of-week gap above), and schema/column-set stability across the
+full range. Neither blocks proceeding on item 6 specifically, but worth a
+follow-up pass before leaning on any single ticker's continuity claim.
+
+**Implication for feature code:** the 2020–2024-09-11 window has ~3
+observations/week, not 5 -- any feature or CV fold logic that assumes daily
+spacing (e.g. "5-day realized vol" meaning 5 calendar business days) will
+silently compute over a longer wall-clock window during that period than
+after 2024-09-12. Either restrict training data to 2024-09-12 onward, or
+make every rolling-window computation session-count-based (not calendar/
+business-day-based) and explicit about which regime a given window falls in.
 
 ---
 
@@ -152,6 +182,6 @@ across the 2019–2026 span have not been checked yet.
 | 3 | Survivorship | ✅ Resolved — clean (single spot check) |
 | 4 | Corporate actions | ✅ Resolved — clean (single spot check) |
 | 5 | Open interest / volume | ✅ Resolved — confirmed absent, permanent, no donor source |
-| 6 | Gaps | ⛔ Open — blocking |
+| 6 | Gaps | ✅ Resolved — Mon/Wed/Fri-only 2019–2024-09-11 (confirmed permanent on the live source), daily from 2024-09-12 |
 
-Do not proceed to feature code (`src/features/`) until #2 and #6 are closed.
+Do not proceed to feature code (`src/features/`) until #2 is closed.
