@@ -1,7 +1,19 @@
-import { Grid, Paper, Typography, Box, Chip, Table, TableBody, TableRow, TableCell } from '@mui/material';
+import { Grid, Paper, Typography, Box, Table, TableBody, TableRow, TableCell } from '@mui/material';
 
-// Dashboard-wide convention: title says what the number is, the Chip gives
-// an emoji-coded bullish/bearish/neutral read at a glance, and
+// Maps the MUI Chip-style color keyword each status object already carries
+// (success/error/warning/default) to the equivalent text color, so the
+// sentiment line renders as plain colored text + emoji dot -- matching the
+// Time Drift (DEX/VEX/CEX) cards' style -- instead of a pill-shaped Chip.
+const STATUS_TEXT_COLOR = {
+  success: 'success.main',
+  error: 'error.main',
+  warning: 'warning.main',
+  info: 'info.main',
+  default: 'text.secondary',
+};
+
+// Dashboard-wide convention: title says what the number is, the sentiment
+// line gives an emoji-coded bullish/bearish/neutral read at a glance, and
 // "What this means:" spells out the judgment in plain language -- status
 // (judgment) and description (plain definition, no judgment) are separate
 // slots so a card can use either or both.
@@ -15,7 +27,9 @@ function MetricCard({ title, value, subtitle, color, status, description, notes 
       </Typography>
       {status && (
         <Box sx={{ mt: 1 }}>
-          <Chip label={`${status.emoji ? `${status.emoji} ` : ''}${status.label}`} size="small" color={status.color} />
+          <Typography variant="body2" sx={{ fontWeight: 600, color: STATUS_TEXT_COLOR[status.color] || 'text.secondary' }}>
+            {status.emoji ? `${status.emoji} ` : ''}{status.label}
+          </Typography>
           {status.description && (
             <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
               <strong>What this means:</strong> {status.description}

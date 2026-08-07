@@ -10,7 +10,6 @@ import {
   Paper,
   Grid,
   Alert,
-  Chip,
   Autocomplete,
   Button,
   Table,
@@ -43,6 +42,17 @@ const MARKET_FACTOR_LABELS = {
   openInterest: 'Open Interest (OI Skew)',
   callWallBreak: 'Price vs Call Wall',
   putWallBreak: 'Price vs Put Wall',
+};
+
+// Same Chip-color-keyword -> text-color mapping as SummaryCards.jsx's
+// MetricCard, so every sentiment indicator on this page renders as plain
+// colored text + emoji dot (the Time Drift / DEX-VEX-CEX card style)
+// instead of a pill-shaped Chip.
+const STATUS_TEXT_COLOR = {
+  success: 'success.main',
+  error: 'error.main',
+  warning: 'warning.main',
+  default: 'text.secondary',
 };
 
 // Signal label/emoji for a factor's vote -- "Slightly" qualifies factors
@@ -1375,9 +1385,9 @@ export default function OptionsAnalyticsDashboardPage() {
                         {maxPainRow.call_oi?.toLocaleString() || 'N/A'}
                       </Typography>
                       {callOiStatus && (
-                        <Box sx={{ mt: 1 }}>
-                          <Chip label={`${callOiStatus.emoji} ${callOiStatus.label}`} size="small" color={callOiStatus.color} />
-                        </Box>
+                        <Typography variant="body2" sx={{ mt: 1, fontWeight: 600, color: STATUS_TEXT_COLOR[callOiStatus.color] || 'text.secondary' }}>
+                          {callOiStatus.emoji} {callOiStatus.label}
+                        </Typography>
                       )}
                       <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
                         <strong>What this means:</strong> {callOiStatus?.description}
@@ -1391,9 +1401,9 @@ export default function OptionsAnalyticsDashboardPage() {
                         {maxPainRow.put_oi?.toLocaleString() || 'N/A'}
                       </Typography>
                       {putOiStatus && (
-                        <Box sx={{ mt: 1 }}>
-                          <Chip label={`${putOiStatus.emoji} ${putOiStatus.label}`} size="small" color={putOiStatus.color} />
-                        </Box>
+                        <Typography variant="body2" sx={{ mt: 1, fontWeight: 600, color: STATUS_TEXT_COLOR[putOiStatus.color] || 'text.secondary' }}>
+                          {putOiStatus.emoji} {putOiStatus.label}
+                        </Typography>
                       )}
                       <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
                         <strong>What this means:</strong> {putOiStatus?.description}
@@ -1511,7 +1521,9 @@ export default function OptionsAnalyticsDashboardPage() {
                                 </Typography>
                               </TableCell>
                               <TableCell>
-                                <Chip label={`${signalMeta.emoji} ${signalMeta.label}`} color={signalMeta.color} size="small" />
+                                <Typography variant="body2" sx={{ fontWeight: 600, color: STATUS_TEXT_COLOR[signalMeta.color] || 'text.secondary' }}>
+                                  {signalMeta.emoji} {signalMeta.label}
+                                </Typography>
                               </TableCell>
                               <TableCell
                                 align="right"
