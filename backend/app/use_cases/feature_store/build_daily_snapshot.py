@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import time
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field, replace
 from datetime import date
 from typing import Callable, Iterator, Mapping, Protocol, Sequence
@@ -147,6 +147,111 @@ def _extract_data_errors(result: object) -> dict[str, str]:
 def _format_exception(exc: Exception) -> str:
     """Format an exception for bounded per-symbol diagnostics."""
     return f"{exc.__class__.__name__}: {exc}"
+
+
+ScannerFactory = Callable[[], StockScanner]
+
+
+def _init_snapshot_worker() -> None:
+    """ProcessPoolExecutor initializer for the static-snapshot symbol scan pool.
+
+    Each worker is a fresh OS process (forked from the Celery worker on
+    Linux/Docker) that inherits the parent's SQLAlchemy engine and open
+    connections. Those must be disposed before this process opens its own —
+    mirrors app.celery_app._dispose_engine_after_fork, which does the same
+    thing for Celery's own prefork workers.
+    """
+    try:
+        from app.database import engine
+
+        engine.dispose()
+    except Exception:
+        logger.warning(
+            "Failed to dispose inherited DB engine in snapshot worker",
+            exc_info=True,
+        )
+    from app.wiring.bootstrap import initialize_process_runtime_services
+
+    initialize_process_runtime_services(force=True)
+
+
+def _scan_symbol_in_worker_process(
+    symbol: str,
+    as_of_date: date,
+    screener_names: list[str],
+    criteria: dict,
+    composite_method: str,
+    merged_requirements: object | None,
+    rs_resolution: MarketRsResolution | None,
+    symbol_data: object | None,
+    scanner_factory: ScannerFactory,
+) -> tuple[str, FeatureRowWrite | None, bool, dict[str, object] | None]:
+    """Cache-only single-symbol scan, run inside a ProcessPoolExecutor worker.
+
+    Only used for the require_bulk_prefetch path, where all data the scan
+    needs was already fetched and passed in via ``symbol_data`` — nothing
+    here does network or per-symbol DB I/O, so this is pure CPU-bound
+    detector work that benefits from a real OS process instead of a
+    GIL-bound thread. Must stay a module-level function (not a closure) so
+    it can be pickled across the process boundary.
+    """
+    sym = symbol.upper()
+    if symbol_data is None:
+        return (
+            sym,
+            None,
+            False,
+            {
+                "symbol": sym,
+                "reason": "bulk_prefetch_missing",
+                "error": None,
+                "data_errors": {},
+            },
+        )
+    try:
+        scanner = scanner_factory()
+        scan_kwargs: dict[str, object] = {"pre_fetched_data": symbol_data}
+        if merged_requirements is not None:
+            scan_kwargs["pre_merged_requirements"] = merged_requirements
+        if rs_resolution is not None:
+            scan_kwargs["market_rs_resolution"] = rs_resolution
+        result = scanner.scan_stock_multi(
+            symbol=sym,
+            screener_names=screener_names,
+            criteria=criteria,
+            composite_method=composite_method,
+            **scan_kwargs,
+        )
+        result_status = _resolve_result_status(result)
+        if isinstance(result, dict) and result and result_status != "error":
+            row = _map_orchestrator_to_feature_row(sym, as_of_date, result)
+            return sym, row, bool(result.get("passes_template")), None
+        error = None
+        if isinstance(result, dict) and result.get("error") is not None:
+            error = str(result.get("error"))
+        return (
+            sym,
+            None,
+            False,
+            {
+                "symbol": sym,
+                "reason": "scanner_error_result",
+                "error": error,
+                "data_errors": _extract_data_errors(result),
+            },
+        )
+    except Exception as exc:
+        return (
+            sym,
+            None,
+            False,
+            {
+                "symbol": sym,
+                "reason": "scan_exception",
+                "error": _format_exception(exc),
+                "data_errors": {},
+            },
+        )
 
 
 def _serialize_universe_definition(universe_def: object) -> dict[str, object]:
@@ -320,12 +425,18 @@ class BuildDailyFeatureSnapshotUseCase:
         market_calendar: MarketCalendarPort | None = None,
         market_rs_reader: MarketRsReader | None = None,
         bootstrap_coverage_evaluator: BootstrapCoverageEvaluator | None = None,
+        scanner_factory: ScannerFactory | None = None,
     ) -> None:
         self._scanner = scanner
         self._data_provider = data_provider
         self._market_calendar = market_calendar
         self._market_rs_reader = market_rs_reader
         self._bootstrap_coverage_evaluator = bootstrap_coverage_evaluator
+        # Optional picklable factory for rebuilding an equivalent scanner
+        # inside a ProcessPoolExecutor worker (see _scan_symbol_in_worker_process).
+        # None (the default used by every test double) keeps the existing
+        # thread-based path with the injected `scanner` unchanged.
+        self._scanner_factory = scanner_factory
 
     def execute(
         self,
@@ -616,6 +727,71 @@ class BuildDailyFeatureSnapshotUseCase:
                     )
                 bulk_prefetch_enabled = False
 
+        # A process pool is only safe/useful for the bulk-prefetch path: every
+        # symbol's data was already fetched into pre_fetched_data below, so the
+        # scan is pure CPU-bound detector work with no per-symbol I/O — and
+        # scanner_factory (only wired in production, never in tests/fakes) lets
+        # each worker process rebuild its own scanner instead of requiring the
+        # injected `self._scanner` to cross the process boundary.
+        use_process_pool = (
+            self._scanner_factory is not None
+            and cmd.require_bulk_prefetch
+            and cmd.static_parallel_workers > 1
+        )
+        process_pool: ProcessPoolExecutor | None = None
+        if use_process_pool:
+            process_pool = ProcessPoolExecutor(
+                max_workers=cmd.static_parallel_workers,
+                initializer=_init_snapshot_worker,
+            )
+
+        try:
+            return self._scan_chunks(
+                uow=uow,
+                run_id=run_id,
+                cmd=cmd,
+                progress=progress,
+                cancel=cancel,
+                symbols=symbols,
+                run_warnings=run_warnings,
+                skipped_symbols=skipped_symbols,
+                progress_state=progress_state,
+                rs_resolution=rs_resolution,
+                start_time=start_time,
+                total=total,
+                effective_chunk_size=effective_chunk_size,
+                bulk_prefetch_enabled=bulk_prefetch_enabled,
+                merged_requirements=merged_requirements,
+                failure_diagnostics=failure_diagnostics,
+                use_process_pool=use_process_pool,
+                process_pool=process_pool,
+            )
+        finally:
+            if process_pool is not None:
+                process_pool.shutdown(wait=True, cancel_futures=True)
+
+    def _scan_chunks(
+        self,
+        *,
+        uow: UnitOfWork,
+        run_id: int,
+        cmd: BuildDailySnapshotCommand,
+        progress: ProgressSink,
+        cancel: CancellationToken,
+        symbols: list[str],
+        run_warnings: tuple[str, ...],
+        skipped_symbols: int,
+        progress_state: _SnapshotRunProgress,
+        rs_resolution: MarketRsResolution | None,
+        start_time: float,
+        total: int,
+        effective_chunk_size: int,
+        bulk_prefetch_enabled: bool,
+        merged_requirements: object | None,
+        failure_diagnostics: FailureDiagnosticsCollector,
+        use_process_pool: bool,
+        process_pool: ProcessPoolExecutor | None,
+    ) -> BuildDailySnapshotResult:
         for chunk in _chunked(symbols, effective_chunk_size):
             # 3a — Cancellation gate
             if cancel.is_cancelled():
@@ -771,7 +947,28 @@ class BuildDailyFeatureSnapshotUseCase:
                 str,
                 tuple[FeatureRowWrite | None, bool, dict[str, object] | None],
             ] = {}
-            if (
+            if use_process_pool and process_pool is not None and len(chunk) > 1:
+                # CPU-bound detector work runs in real OS processes here, not
+                # GIL-bound threads — see _scan_symbol_in_worker_process.
+                futures = {
+                    process_pool.submit(
+                        _scan_symbol_in_worker_process,
+                        symbol,
+                        cmd.as_of_date,
+                        cmd.screener_names,
+                        cmd.criteria,
+                        cmd.composite_method,
+                        merged_requirements,
+                        rs_resolution,
+                        pre_fetched_data.get(symbol.upper()),
+                        self._scanner_factory,
+                    ): symbol
+                    for symbol in chunk
+                }
+                for future in as_completed(futures):
+                    sym, row, passed, diagnostic = future.result()
+                    outcomes_by_symbol[sym] = (row, passed, diagnostic)
+            elif (
                 cmd.require_bulk_prefetch
                 and cmd.static_parallel_workers > 1
                 and len(chunk) > 1
