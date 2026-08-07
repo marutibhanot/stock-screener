@@ -90,8 +90,16 @@ class _FakeSession:
             compiled = stmt.compile()
             self.upserted_rows.append(list(compiled.params_list if hasattr(compiled, "params_list") else [params or {}]))
             return None
-        # Raw text() query -- only the external_volatility_history lookup uses this.
-        tickers = set((params or {}).get("tickers", []))
+        # Two different raw text() queries hit external_volatility_history:
+        # _resolve_universe's "every symbol with data that day" (no tickers
+        # param, plain (symbol,) rows) and _load_volatility_history's
+        # per-ticker feature lookup (has a tickers param, full _VolRow rows).
+        # self.volatility_rows is already scoped to one implicit trading_date
+        # per test fixture, so no additional date filtering is needed here.
+        params = params or {}
+        if "tickers" not in params:
+            return [(row.symbol,) for row in self.volatility_rows]
+        tickers = set(params.get("tickers", []))
         return [row for row in self.volatility_rows if row.symbol in tickers]
 
     def commit(self):

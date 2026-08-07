@@ -1,21 +1,35 @@
 """Historical-analog forward-outcome search ("The Horizon").
 
 Given a ticker's current cross-sectional percentile fingerprint (how
-unusual today's IV, VRP, and GEX readings are relative to every other
-ticker that same day -- feature_percentiles.pct_xsec, which populates from
-day one, unlike pct_self_252d which needs 60 trailing observations), this
-searches feature_percentiles across ALL tickers and dates for past rows
-with a similar fingerprint, then computes the REAL forward return of the
+unusual today's readings are relative to every other ticker that same day
+-- feature_percentiles.pct_xsec, which populates from day one, unlike
+pct_self_252d which needs 60 trailing observations), this searches
+feature_percentiles across ALL tickers and dates for past rows with a
+similar fingerprint, then computes the REAL forward return of the
 underlying (via stock_prices, never anything options-derived) for whichever
 matches are old enough to have a full forward window.
 
 No model, no trained classifier, no invented scenario taxonomy -- every
 number here is arithmetic over real historical rows. The sample size is
-always reported honestly; given feature_percentiles only started
-accumulating 2026-08-06, that sample size will be small-to-zero for a
-while. That's expected, not a bug -- see feature_percentile.py's own
-docstring on history_tier for the same philosophy applied elsewhere in this
-package.
+always reported honestly.
+
+Two independent fingerprint groups, matched and unioned SEPARATELY rather
+than intersected together -- this is deliberate, not an oversight:
+  - SHALLOW_FINGERPRINT_FEATURES (ivr, volatility_risk_premium, total_gex)
+    come from options_metrics_snapshots/gex_snapshots, which only started
+    accumulating 2026-08-06/07-30. Sample size here will be small-to-zero
+    for months.
+  - DEEP_FINGERPRINT_FEATURES (iv_hv_spread) comes from
+    external_volatility_history, with real coverage back to 2019-02-09.
+  If these were intersected into one combined fingerprint (require a
+  candidate to match on ALL of them simultaneously), every pre-2026-08
+  candidate would be excluded outright -- it structurally cannot have a
+  shallow-feature row that far back, so requiring one at all caps the
+  match set at the shallow tier's own tiny window regardless of how deep
+  the other tier's history goes. Searching each group independently and
+  unioning the results is what actually lets a 2019-era row qualify via
+  iv_hv_spread alone, while shallow-only matches remain available too
+  (and will matter more as that tier's own history grows).
 
 "Scenarios" in the API response are a bucketed cut of the exact same match
 set (what fraction ended up big / down big / roughly flat), not named
@@ -37,7 +51,9 @@ from sqlalchemy.orm import Session
 from app.models.feature_percentile import FeaturePercentile
 from app.models.stock import StockPrice
 
-FINGERPRINT_FEATURES: tuple[str, ...] = ("ivr", "volatility_risk_premium", "total_gex")
+SHALLOW_FINGERPRINT_FEATURES: tuple[str, ...] = ("ivr", "volatility_risk_premium", "total_gex")
+DEEP_FINGERPRINT_FEATURES: tuple[str, ...] = ("iv_hv_spread",)
+FINGERPRINT_FEATURES: tuple[str, ...] = SHALLOW_FINGERPRINT_FEATURES + DEEP_FINGERPRINT_FEATURES
 DEFAULT_TOLERANCE_PCT = 10.0
 HORIZON_TRADING_DAYS: tuple[int, ...] = (5, 21)
 # Forward-window search buffer: trading_days() needs an end date, not just a
@@ -138,7 +154,19 @@ def compute_horizon(
             reason="no_pct_xsec_values_for_fingerprint_features",
         )
 
-    candidates = _find_candidates(db, fingerprint, tolerance_pct, before=as_of_date)
+    # Two independent searches, unioned -- NOT one intersection across every
+    # fingerprint feature. See the module docstring for why: intersecting
+    # shallow (2026+) and deep (2019+) features would cap every match at
+    # the shallow tier's tiny window, since pre-2026 rows structurally
+    # cannot have a shallow-feature value to intersect against.
+    shallow_fingerprint = {k: v for k, v in fingerprint.items() if k in SHALLOW_FINGERPRINT_FEATURES}
+    deep_fingerprint = {k: v for k, v in fingerprint.items() if k in DEEP_FINGERPRINT_FEATURES}
+    candidate_set: set[tuple[str, date]] = set()
+    if shallow_fingerprint:
+        candidate_set.update(_find_candidates(db, shallow_fingerprint, tolerance_pct, before=as_of_date))
+    if deep_fingerprint:
+        candidate_set.update(_find_candidates(db, deep_fingerprint, tolerance_pct, before=as_of_date))
+    candidates = sorted(candidate_set)
 
     horizon_stats: dict[int, HorizonStats] = {}
     for horizon_days in horizons:
@@ -325,6 +353,7 @@ def _aggregate(horizon_days: int, returns: list[float]) -> HorizonStats:
 
 
 __all__ = [
+    "DEEP_FINGERPRINT_FEATURES",
     "DEFAULT_TOLERANCE_PCT",
     "FINGERPRINT_FEATURES",
     "HORIZON_TRADING_DAYS",
@@ -332,5 +361,6 @@ __all__ = [
     "HorizonResult",
     "HorizonStats",
     "OUTCOME_BUCKETS",
+    "SHALLOW_FINGERPRINT_FEATURES",
     "compute_horizon",
 ]

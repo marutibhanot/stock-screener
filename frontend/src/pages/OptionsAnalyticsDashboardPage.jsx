@@ -64,24 +64,37 @@ const STATUS_TEXT_COLOR = {
 // HIGH (crowded, expensive insurance); GEX is notable when LOW (dealers in
 // negative-gamma/amplifying mode) -- matching the existing 'ivr' cheap/
 // expensive convention in SummaryCards.jsx's getMetricStatus.
+// Plain-language labels matching the exact vocabulary already used
+// elsewhere on this page (SummaryCards.jsx's "💲 Option Prices (IV Rank)",
+// "💰 Option Value (Volatility Risk Premium)") -- the jargon term goes in
+// parentheses for anyone who wants it, the plain phrase leads.
 const FINGERPRINT_FEATURE_META = {
-  ivr: { label: 'Implied Volatility', lowIsNotable: false },
-  volatility_risk_premium: { label: 'Vol Risk Premium', lowIsNotable: false },
-  total_gex: { label: 'Gamma Exposure (Dealer Mode)', lowIsNotable: true },
+  ivr: { label: 'Option Prices (Implied Volatility)', lowIsNotable: false },
+  volatility_risk_premium: { label: 'Option Value (Vol Risk Premium)', lowIsNotable: false },
+  total_gex: { label: 'Dealer Stability (Gamma Exposure)', lowIsNotable: true },
+  // Sourced from external_volatility_history (real coverage back to
+  // 2019-02-09), unlike the other three (options_metrics_snapshots/
+  // gex_snapshots, live since 2026-08) -- this is the dimension The
+  // Horizon's historical-analog search can actually use for real depth
+  // right now. See DEEP_FINGERPRINT_FEATURES in horizon.py.
+  iv_hv_spread: { label: 'Option Value, Long History (IV vs. Historical Vol)', lowIsNotable: false },
 };
 
 // Percentile -> status label/color, one convention shared by every
 // PercentileGauge on this page -- <20th/>80th are the "notable" tails
 // (matching SummaryCards.jsx's ivr<20/ivr>80 thresholds), direction of
 // which tail means what set by FINGERPRINT_FEATURE_META.lowIsNotable.
+// Labels reuse the same plain wording as SummaryCards.jsx's getMetricStatus
+// (Cheap/Expensive/Fair) and getGexNarrative (shock absorber / amplifies
+// moves), not raw statistics jargon.
 const getPercentileStatus = (featureKey, pct) => {
   if (pct == null || Number.isNaN(Number(pct))) return null;
   const meta = FINGERPRINT_FEATURE_META[featureKey];
   if (!meta) return null;
   const num = Number(pct);
   if (meta.lowIsNotable) {
-    if (num < 20) return { label: 'Fragile / Negative Gamma', color: 'error' };
-    if (num > 80) return { label: 'Stable / Positive Gamma', color: 'success' };
+    if (num < 20) return { label: 'Fragile (Can Amplify Swings)', color: 'error' };
+    if (num > 80) return { label: 'Stable (Calms Swings)', color: 'success' };
     return { label: 'Balanced', color: 'default' };
   }
   if (num > 80) return { label: 'Expensive', color: 'warning' };
@@ -1515,10 +1528,15 @@ export default function OptionsAnalyticsDashboardPage() {
           <SectionHeader
             icon="🌤️"
             title="The Weather"
-            goal="See how unusual today's options pricing is, compared to every other ticker today."
+            goal="See how today's options pricing for this stock compares to every other stock, right now."
           />
           {horizonData && horizonData.status === 'ok' && Object.keys(horizonData.fingerprint).length > 0 ? (
             <Paper sx={{ p: 2, mt: 1 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                Each bar shows where today&apos;s reading ranks against every other stock today -- for
+                example, 90th percentile means today&apos;s reading is higher than 90% of stocks. Higher
+                isn&apos;t automatically bad, just unusual.
+              </Typography>
               <Grid container spacing={3}>
                 {Object.entries(FINGERPRINT_FEATURE_META).map(([key, meta]) => {
                   const pct = horizonData.fingerprint[key];
@@ -1531,16 +1549,16 @@ export default function OptionsAnalyticsDashboardPage() {
                 })}
               </Grid>
               <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                Cross-sectional percentile vs. every other ticker on {horizonData.as_of_date} -- based on
-                the nearest options expiration each day, not the expiration selected above.
+                Compared against every other stock on {horizonData.as_of_date}, using each day&apos;s
+                nearest options expiration -- not the expiration you picked above.
               </Typography>
             </Paper>
           ) : (
             <Paper sx={{ p: 2, mt: 1 }}>
               <Typography variant="body2" color="text.secondary">
                 {horizonData?.status === 'insufficient_fingerprint'
-                  ? 'No IV/VRP/GEX percentile data yet for this ticker today.'
-                  : 'No percentile data available for this ticker yet.'}
+                  ? "We don't have enough options data for this ticker today to compare it to other stocks yet."
+                  : 'No data available for this ticker yet.'}
               </Typography>
             </Paper>
           )}
@@ -1548,14 +1566,14 @@ export default function OptionsAnalyticsDashboardPage() {
           <SectionHeader
             icon="📈"
             title="The Forecast"
-            goal="See what the options market itself is pricing in for where the stock might go."
+            goal="See what the options market itself expects for where the stock might go."
           />
           {displayOptionsMetrics && (
             <Paper sx={{ p: 2, mt: 1 }}>
               <Grid container spacing={4}>
                 <Grid item xs={12} md={6}>
                   <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                    Price Range (~68% Confidence, to Expiration)
+                    🎯 Expected Move
                   </Typography>
                   {displayOptionsMetrics.expected_move != null && displayOptionsMetrics.underlying_price != null ? (
                     <>
@@ -1565,8 +1583,9 @@ export default function OptionsAnalyticsDashboardPage() {
                         ${(displayOptionsMetrics.underlying_price + displayOptionsMetrics.expected_move).toFixed(2)}
                       </Typography>
                       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                        Derived from the at-the-money straddle price -- the options market&apos;s own implied
-                        1-standard-deviation move to expiration, not a directional prediction.
+                        Based on today&apos;s option prices, the market expects the stock to stay within this
+                        range most of the time between now and expiration. This is not a prediction -- just
+                        the range that options are currently pricing in.
                       </Typography>
                     </>
                   ) : (
@@ -1577,14 +1596,14 @@ export default function OptionsAnalyticsDashboardPage() {
                 </Grid>
                 <Grid item xs={12} md={6}>
                   <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                    Key Levels vs. Spot
+                    📍 Key Price Levels
                   </Typography>
                   <Table size="small" sx={{ mt: 1 }}>
                     <TableBody>
                       {[
-                        { label: 'Put Wall (support)', strike: displayAnalysisData?.put_wall?.strike },
-                        { label: 'Gamma Flip', strike: displayAnalysisData?.flip_level?.strike },
-                        { label: 'Call Wall (resistance)', strike: displayAnalysisData?.call_wall?.strike },
+                        { label: 'Floor (Put Wall)', strike: displayAnalysisData?.put_wall?.strike },
+                        { label: 'Tipping Point (Gamma Flip)', strike: displayAnalysisData?.flip_level?.strike },
+                        { label: 'Ceiling (Call Wall)', strike: displayAnalysisData?.call_wall?.strike },
                       ].map(({ label, strike }) => {
                         const spot = displayAnalysisData?.spot_price;
                         const distancePct = strike != null && spot ? ((strike - spot) / spot) * 100 : null;
@@ -1606,8 +1625,10 @@ export default function OptionsAnalyticsDashboardPage() {
                     </TableBody>
                   </Table>
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                    Real dealer-positioning levels, not a probability -- how likely price is to reach them
-                    isn&apos;t something this dashboard estimates.
+                    These are price levels where option dealers are heavily positioned -- the Floor tends to
+                    act like support, the Ceiling like resistance, and the Tipping Point is roughly where
+                    dealers switch from calming price swings to amplifying them. Not a prediction of where
+                    price will actually go, just where the pressure points are today.
                   </Typography>
                 </Grid>
               </Grid>
@@ -1617,7 +1638,7 @@ export default function OptionsAnalyticsDashboardPage() {
           <SectionHeader
             icon="🔭"
             title="The Horizon"
-            goal="See what actually happened after similar setups in the past -- real historical outcomes, not a model prediction."
+            goal="See what actually happened after similar setups in the past -- real history, not a model's guess."
           />
           {horizonData && horizonData.status === 'ok' ? (
             <Paper sx={{ p: 2, mt: 1 }}>
@@ -1628,14 +1649,14 @@ export default function OptionsAnalyticsDashboardPage() {
                   return (
                     <Grid item xs={12} md={6} key={days}>
                       <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                        {days}-Day Outlook
+                        {days} Trading Days Later
                       </Typography>
                       {stats.sample_size > 0 ? (
                         <>
                           <Table size="small" sx={{ mt: 1 }}>
                             <TableBody>
                               <TableRow>
-                                <TableCell>Median</TableCell>
+                                <TableCell>Typical Result</TableCell>
                                 <TableCell
                                   align="right"
                                   sx={{ color: stats.median_return_pct >= 0 ? 'success.main' : 'error.main', fontWeight: 600 }}
@@ -1645,13 +1666,13 @@ export default function OptionsAnalyticsDashboardPage() {
                                 </TableCell>
                               </TableRow>
                               <TableRow>
-                                <TableCell>Worst</TableCell>
+                                <TableCell>Worst Result Seen</TableCell>
                                 <TableCell align="right" sx={{ color: 'error.main', fontWeight: 600 }}>
                                   {stats.worst_return_pct.toFixed(1)}%
                                 </TableCell>
                               </TableRow>
                               <TableRow>
-                                <TableCell>Win Rate</TableCell>
+                                <TableCell>How Often It Went Up</TableCell>
                                 <TableCell align="right" sx={{ fontWeight: 600 }}>
                                   {stats.win_rate_pct.toFixed(0)}%
                                 </TableCell>
@@ -1659,14 +1680,14 @@ export default function OptionsAnalyticsDashboardPage() {
                             </TableBody>
                           </Table>
                           <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                            Based on {stats.sample_size} historical instance{stats.sample_size === 1 ? '' : 's'} with
-                            a similar percentile fingerprint (±{horizonData.tolerance_pct}pts).
+                            Based on {stats.sample_size} time{stats.sample_size === 1 ? '' : 's'} in the past when
+                            trading conditions for some stock looked similar to today.
                           </Typography>
                         </>
                       ) : (
                         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                          No historical matches found yet -- feature_percentiles&apos; history is still short. This
-                          will fill in as more days accumulate.
+                          We haven&apos;t found a close enough match in the past yet. We&apos;re still building up
+                          this history, so this will start filling in soon.
                         </Typography>
                       )}
                     </Grid>
@@ -1676,23 +1697,23 @@ export default function OptionsAnalyticsDashboardPage() {
 
               <Box sx={{ mt: 3, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
                 <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                  Scenarios (21-Day, Same Matches)
+                  How It Usually Played Out (21 Trading Days Later)
                 </Typography>
                 {(() => {
                   const stats21 = horizonData.horizons?.['21'];
                   if (!stats21 || stats21.sample_size === 0) {
                     return (
                       <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                        No historical matches yet to break down into outcome buckets.
+                        Not enough past matches yet to break this down.
                       </Typography>
                     );
                   }
                   const bucketLabels = {
-                    strong_down: 'Sharp Drop (< -5%)',
+                    strong_down: 'Big Drop (< -5%)',
                     down: 'Down (-5% to -1%)',
                     flat: 'Roughly Flat (-1% to +1%)',
                     up: 'Up (+1% to +5%)',
-                    strong_up: 'Sharp Rally (> +5%)',
+                    strong_up: 'Big Rally (> +5%)',
                   };
                   const bucketColor = (label) => {
                     if (label === 'strong_up' || label === 'up') return 'success.main';
@@ -1728,8 +1749,8 @@ export default function OptionsAnalyticsDashboardPage() {
                         ))}
                       </Box>
                       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
-                        Real outcome distribution across the same {stats21.sample_size} historical matches
-                        above -- not named scenarios with modeled probabilities.
+                        What actually happened, grouped into ranges, across those same {stats21.sample_size} past
+                        matches -- real history, not a prediction.
                       </Typography>
                     </>
                   );
@@ -1740,8 +1761,8 @@ export default function OptionsAnalyticsDashboardPage() {
             <Paper sx={{ p: 2, mt: 1 }}>
               <Typography variant="body2" color="text.secondary">
                 {horizonData?.status === 'insufficient_fingerprint'
-                  ? "No IV/VRP/GEX percentile data yet for this ticker today -- The Horizon needs at least one of those to search for historical analogs."
-                  : 'No historical-analog data available for this ticker yet.'}
+                  ? "We don't have enough options data for this ticker today to look for similar setups in the past."
+                  : 'No history-matching data available for this ticker yet.'}
               </Typography>
             </Paper>
           )}

@@ -237,3 +237,40 @@ class TestComputeHorizonWithMatches:
         result = compute_horizon(db, "AAPL", as_of_date=as_of, calendar_service=cal)
         assert result.fingerprint == {"ivr": 90.0, "volatility_risk_premium": 80.0}
         assert result.horizons[5].sample_size == 1  # only NFLX, not MSFT
+
+    def test_deep_and_shallow_features_are_matched_independently_not_intersected(self, session_factory):
+        """The core fix: a candidate with ONLY deep-tier data (the 2019+
+        external_volatility_history-backed iv_hv_spread) must still be
+        found, even though today's fingerprint also has shallow features
+        (ivr) that the candidate has no historical row for at all -- e.g.
+        every real (ticker, date) pair from before 2026-08. Intersecting
+        shallow+deep into one combined fingerprint would wrongly exclude
+        every such candidate.
+        """
+        db = session_factory()
+        cal = _AllWeekdaysCalendar()
+        as_of = date(2026, 8, 7)
+        deep_only_match_date = date(2019, 6, 3)  # long before shallow tables existed
+
+        # Today's fingerprint has both a shallow feature (ivr) and the deep
+        # one (iv_hv_spread).
+        db.add(_fp_row("AAPL", as_of, "ivr", 90.0))
+        db.add(_fp_row("AAPL", as_of, "iv_hv_spread", 70.0))
+
+        # IBM in 2019: matches on iv_hv_spread, has NO ivr row at all for
+        # that date (the table didn't exist yet) -- must still be found via
+        # the deep-only path.
+        db.add(_fp_row("IBM", deep_only_match_date, "iv_hv_spread", 72.0))
+        db.commit()
+
+        five_day_end = cal.nth_trading_day_after(deep_only_match_date, 5)
+        db.add(_price_row("IBM", deep_only_match_date, 50.0))
+        db.add(_price_row("IBM", five_day_end, 55.0))  # +10%
+        db.commit()
+
+        result = compute_horizon(db, "AAPL", as_of_date=as_of, calendar_service=cal)
+
+        assert result.status == "ok"
+        assert result.fingerprint == {"ivr": 90.0, "iv_hv_spread": 70.0}
+        assert result.horizons[5].sample_size == 1
+        assert result.horizons[5].median_return_pct == pytest.approx(10.0)

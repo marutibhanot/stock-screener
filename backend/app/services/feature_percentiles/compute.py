@@ -205,13 +205,31 @@ class ComputeFeaturePercentilesService:
         )
 
     def _resolve_universe(self, db: Session, trading_date: date) -> list[str]:
-        rows = (
+        """Union of every ticker with ANY source data on this date -- not
+        just options_metrics_snapshots. external_volatility_history has
+        real coverage back to 2019-02-09 (2,321 symbols) that predates
+        options_metrics_snapshots/gex_snapshots by years (both started
+        2026); restricting the universe to the shallow tables would make
+        that history permanently unreachable regardless of backfill range.
+        A ticker only present in one source simply gets None for every
+        feature from the others -- extract_*_features(None) already
+        handles that, and cross_sectional_percentile already drops None
+        entries, so no per-tier universe split is needed here.
+        """
+        shallow_rows = (
             db.query(OptionsMetricsSnapshot.ticker)
             .filter(OptionsMetricsSnapshot.trading_date == trading_date)
             .distinct()
             .all()
         )
-        return sorted({ticker for (ticker,) in rows})
+        deep_rows = db.execute(
+            text(
+                "SELECT DISTINCT symbol FROM external_volatility_history WHERE trading_date = :trading_date"
+            ),
+            {"trading_date": trading_date},
+        )
+        tickers = {ticker for (ticker,) in shallow_rows} | {row[0] for row in deep_rows}
+        return sorted(tickers)
 
     def _load_options_metrics(
         self, db: Session, trading_date: date, tickers: list[str]
