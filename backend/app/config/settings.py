@@ -391,6 +391,7 @@ class Settings(BaseSettings):
     static_snapshot_chunk_size: int = 100  # Larger chunk size for CI/static batch processing
     static_snapshot_parallel_workers: int = 8  # Bounded symbol-level parallelism for static batch processing
     static_snapshot_use_process_pool: bool = True  # Run static-snapshot symbol scans in worker processes instead of threads so CPU-bound detectors bypass the GIL
+    scan_usecase_use_process_pool: bool = True  # Same fix as static_snapshot_use_process_pool, for cache-only manual bulk scans (run_bulk_scan.py)
     feature_snapshot_soft_time_limit_seconds: int = 10800  # 3h budget for full ALL-universe daily snapshot in Docker/Postgres
     feature_snapshot_stale_after_minutes: int = 240  # Running feature runs older than this are treated as stale and failed
     feature_metadata_repair_batch_size: int = 500  # Rows per batch when repairing published feature-run metadata

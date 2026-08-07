@@ -88,6 +88,7 @@ def get_export_scan_results_use_case() -> ExportScanResultsUseCase:
 
 
 def get_run_bulk_scan_use_case() -> RunBulkScanUseCase:
+    from app.config.settings import settings
     from app.use_cases.scanning.run_bulk_scan import RunBulkScanUseCase
 
     runtime = resolve_runtime_services()
@@ -96,6 +97,11 @@ def get_run_bulk_scan_use_case() -> RunBulkScanUseCase:
         scanner=runtime.scan_orchestrator(),
         data_provider=runtime.stock_data_provider(),
         market_rs_reader=runtime.market_rs_reader(),
+        scanner_factory=(
+            build_worker_scan_orchestrator
+            if settings.scan_usecase_use_process_pool
+            else None
+        ),
     )
 
 

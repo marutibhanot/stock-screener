@@ -855,6 +855,122 @@ class TestRunBulkScanHappyPath:
         assert observed_workers == [2]
         assert sorted(scanner.calls) == ["AAPL", "MSFT"]
 
+    def test_cache_only_uses_process_pool_when_scanner_factory_provided(self):
+        """When a scanner_factory is injected, cache-only parallel scans route
+        through ProcessPoolExecutor instead of ThreadPoolExecutor (real OS
+        processes bypass the GIL for CPU-bound detector work). Without a
+        scanner_factory (the default used by every other test in this file),
+        the existing ThreadPoolExecutor path is untouched.
+        """
+        scan_repo = FakeScanRepository()
+        scan_repo.scans["s1"] = _make_scan("s1")
+        result_repo = FakeScanResultRepository()
+        scanner = _BulkAwareFakeScanner(
+            results={
+                "AAPL": {"composite_score": 90, "rating": "Strong Buy", "passes_template": True},
+                "MSFT": {"composite_score": 65, "rating": "Watch", "passes_template": False},
+                "GOOG": {"composite_score": 82, "rating": "Buy", "passes_template": True},
+            }
+        )
+
+        class _FakeFuture:
+            def __init__(self, result):
+                self._result = result
+
+            def result(self):
+                return self._result
+
+        class _FakeProcessPoolExecutor:
+            instances: list["_FakeProcessPoolExecutor"] = []
+
+            def __init__(self, *, max_workers, initializer):
+                self.max_workers = max_workers
+                self.initializer = initializer
+                self.submitted: list[tuple] = []
+                self.shutdown_called = False
+                _FakeProcessPoolExecutor.instances.append(self)
+
+            def submit(self, fn, *args):
+                self.submitted.append((fn, args))
+                return _FakeFuture(fn(*args))
+
+            def shutdown(self, wait=True, cancel_futures=False):
+                self.shutdown_called = True
+
+        _FakeProcessPoolExecutor.instances = []
+
+        use_case = RunBulkScanUseCase(
+            scanner=scanner,
+            data_provider=FakeStockDataProvider(),
+            scanner_factory=lambda: scanner,
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "app.use_cases.scanning.run_bulk_scan.ProcessPoolExecutor",
+                _FakeProcessPoolExecutor,
+            )
+            result = use_case.execute(
+                FakeUnitOfWork(scans=scan_repo, scan_results=result_repo),
+                RunBulkScanCommand(
+                    scan_id="s1",
+                    symbols=["AAPL", "MSFT", "GOOG"],
+                    chunk_size=3,
+                    cache_only=True,
+                    parallel_workers=2,
+                ),
+                FakeProgressSink(),
+                FakeCancellationToken(),
+            )
+
+        assert result.status == ScanStatus.COMPLETED.value
+        assert result.total_scanned == 3
+        assert len(_FakeProcessPoolExecutor.instances) == 1
+        pool = _FakeProcessPoolExecutor.instances[0]
+        assert pool.max_workers == 2
+        assert pool.shutdown_called is True
+        assert len(pool.submitted) == 3
+
+    def test_cache_only_without_scanner_factory_still_uses_thread_pool(self):
+        """Default DI (no scanner_factory) must never construct a ProcessPoolExecutor."""
+        scan_repo = FakeScanRepository()
+        scan_repo.scans["s1"] = _make_scan("s1")
+        result_repo = FakeScanResultRepository()
+        scanner = _BulkAwareFakeScanner(
+            results={
+                "AAPL": {"composite_score": 90, "rating": "Strong Buy", "passes_template": True},
+                "MSFT": {"composite_score": 65, "rating": "Watch", "passes_template": False},
+            }
+        )
+
+        use_case = RunBulkScanUseCase(
+            scanner=scanner,
+            data_provider=FakeStockDataProvider(),
+        )
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(
+                "app.use_cases.scanning.run_bulk_scan.ProcessPoolExecutor",
+                lambda *a, **kw: (_ for _ in ()).throw(
+                    AssertionError("must not construct a process pool without scanner_factory")
+                ),
+            )
+            result = use_case.execute(
+                FakeUnitOfWork(scans=scan_repo, scan_results=result_repo),
+                RunBulkScanCommand(
+                    scan_id="s1",
+                    symbols=["AAPL", "MSFT"],
+                    chunk_size=2,
+                    cache_only=True,
+                    parallel_workers=2,
+                ),
+                FakeProgressSink(),
+                FakeCancellationToken(),
+            )
+
+        assert result.status == ScanStatus.COMPLETED.value
+        assert result.total_scanned == 2
+
     def test_parallel_workers_ignored_for_partial_prefetch_cache_populating_scans(
         self, monkeypatch
     ):
