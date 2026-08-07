@@ -31,6 +31,7 @@ import UnusualVolumeTable from '../components/OptionsMetrics/UnusualVolumeTable'
 import MetricHistoryChart from '../components/OptionsMetrics/MetricHistoryChart';
 import ExpirationSelector from '../components/OptionsMetrics/ExpirationSelector';
 import LastUpdated from '../components/OptionsMetrics/LastUpdated';
+import PercentileGauge from '../components/OptionsMetrics/PercentileGauge';
 
 // Human-readable label per evaluateMarketFactors() key, shared by the bullet
 // list and the factor-breakdown table so naming never drifts between them.
@@ -53,6 +54,39 @@ const STATUS_TEXT_COLOR = {
   error: 'error.main',
   warning: 'warning.main',
   default: 'text.secondary',
+};
+
+// The Weather / Horizon / Scenarios panels below read feature_percentiles'
+// cross-sectional percentile (pct_xsec) for these 3 features -- the same
+// dimensions The Horizon's historical-analog search matches on (see
+// FINGERPRINT_FEATURES in horizon.py). lowIsNotable flips which tail is
+// the "pay attention" direction: cheap/rich IV and VRP are notable when
+// HIGH (crowded, expensive insurance); GEX is notable when LOW (dealers in
+// negative-gamma/amplifying mode) -- matching the existing 'ivr' cheap/
+// expensive convention in SummaryCards.jsx's getMetricStatus.
+const FINGERPRINT_FEATURE_META = {
+  ivr: { label: 'Implied Volatility', lowIsNotable: false },
+  volatility_risk_premium: { label: 'Vol Risk Premium', lowIsNotable: false },
+  total_gex: { label: 'Gamma Exposure (Dealer Mode)', lowIsNotable: true },
+};
+
+// Percentile -> status label/color, one convention shared by every
+// PercentileGauge on this page -- <20th/>80th are the "notable" tails
+// (matching SummaryCards.jsx's ivr<20/ivr>80 thresholds), direction of
+// which tail means what set by FINGERPRINT_FEATURE_META.lowIsNotable.
+const getPercentileStatus = (featureKey, pct) => {
+  if (pct == null || Number.isNaN(Number(pct))) return null;
+  const meta = FINGERPRINT_FEATURE_META[featureKey];
+  if (!meta) return null;
+  const num = Number(pct);
+  if (meta.lowIsNotable) {
+    if (num < 20) return { label: 'Fragile / Negative Gamma', color: 'error' };
+    if (num > 80) return { label: 'Stable / Positive Gamma', color: 'success' };
+    return { label: 'Balanced', color: 'default' };
+  }
+  if (num > 80) return { label: 'Expensive', color: 'warning' };
+  if (num < 20) return { label: 'Cheap', color: 'success' };
+  return { label: 'Fair', color: 'default' };
 };
 
 // Signal label/emoji for a factor's vote -- "Slightly" qualifies factors
@@ -100,6 +134,12 @@ export default function OptionsAnalyticsDashboardPage() {
   const [gexData, setGexData] = useState(null);
   const [maxPainData, setMaxPainData] = useState(null);
   const [optionsMetrics, setOptionsMetrics] = useState(null);
+  // Real historical-analog search (Weather percentiles + The Horizon +
+  // Scenarios) -- see GET /v1/options/horizon/:symbol. Not expiration-
+  // dependent (feature_percentiles has no expiration dimension, only
+  // ticker+date), so this does NOT refetch when selectedExpiration changes,
+  // unlike optionsMetrics/termStructureData below.
+  const [horizonData, setHorizonData] = useState(null);
 
   // Live, per-expiration term structure (Max Pain + GEX + options metrics
   // for the specific expiration picked in ExpirationSelector, computed from
@@ -175,6 +215,7 @@ export default function OptionsAnalyticsDashboardPage() {
       setGexData(null);
       setMaxPainData(null);
       setOptionsMetrics(null);
+      setHorizonData(null);
       setError(null);
       return;
     }
@@ -185,17 +226,20 @@ export default function OptionsAnalyticsDashboardPage() {
       setGexData(null);
       setMaxPainData(null);
       setOptionsMetrics(null);
+      setHorizonData(null);
 
       try {
-        const [gexResp, maxPainResp, optionsResp] = await Promise.all([
+        const [gexResp, maxPainResp, optionsResp, horizonResp] = await Promise.all([
           apiClient.get('/v1/gex/dashboard', { params: { symbol: selectedTicker.symbol } }).catch(() => null),
           apiClient.get('/v1/max-pain/dashboard', { params: { symbol: selectedTicker.symbol } }).catch(() => null),
           apiClient.post('/v1/options/metrics', { symbol: selectedTicker.symbol }).catch(() => null),
+          apiClient.get(`/v1/options/horizon/${selectedTicker.symbol}`).catch(() => null),
         ]);
 
         setGexData(gexResp?.data ?? null);
         setMaxPainData(maxPainResp?.data ?? null);
         setOptionsMetrics(optionsResp?.data ?? null);
+        setHorizonData(horizonResp?.data ?? null);
 
         if (!gexResp && !maxPainResp && !optionsResp) {
           setError('No data available for this ticker');
@@ -731,23 +775,43 @@ export default function OptionsAnalyticsDashboardPage() {
     };
   };
 
+  // Minimum Horizon sample size before the summary sentence says anything
+  // quantitative about it -- below this, "N=2" reads as false precision
+  // rather than a real statistic. The sentence always states N explicitly
+  // when it does fire, so the reader can judge the sample themselves.
+  const MIN_HORIZON_SAMPLE_FOR_SUMMARY = 5;
+
   // "Overall:" wrap-up sentence -- states which side wins, then adds a
   // caveat only when at least one factor actually disagrees with the
-  // conclusion (a clean sweep gets no "although" hedge).
-  const getOverallSummary = (factors, signal) => {
+  // conclusion (a clean sweep gets no "although" hedge). Optionally appends
+  // a real Horizon sentence (never fabricated -- omitted entirely below
+  // MIN_HORIZON_SAMPLE_FOR_SUMMARY rather than stated with a misleadingly
+  // small N).
+  const getOverallSummary = (factors, signal, horizon21d) => {
     if (!factors || factors.length === 0 || !signal) return null;
     const hasBullishFactor = factors.some((f) => f.vote > 0);
     const hasBearishFactor = factors.some((f) => f.vote < 0);
 
+    let sentence;
     if (signal.direction === 'bullish') {
       const caveat = hasBearishFactor ? ', although a short-term pullback is still possible.' : '.';
-      return `The positive signals outweigh the negative ones, so the market currently has a bullish bias${caveat}`;
-    }
-    if (signal.direction === 'bearish') {
+      sentence = `The positive signals outweigh the negative ones, so the market currently has a bullish bias${caveat}`;
+    } else if (signal.direction === 'bearish') {
       const caveat = hasBullishFactor ? ', although a short-term bounce is still possible.' : '.';
-      return `The negative signals outweigh the positive ones, so the market currently has a bearish bias${caveat}`;
+      sentence = `The negative signals outweigh the positive ones, so the market currently has a bearish bias${caveat}`;
+    } else {
+      sentence = "Signals are mixed and don't strongly favor either direction, so the market currently has a neutral bias.";
     }
-    return "Signals are mixed and don't strongly favor either direction, so the market currently has a neutral bias.";
+
+    if (horizon21d && horizon21d.sample_size >= MIN_HORIZON_SAMPLE_FOR_SUMMARY) {
+      const winRate = horizon21d.win_rate_pct;
+      const median = horizon21d.median_return_pct;
+      sentence +=
+        ` Historically, the ${horizon21d.sample_size} most similar setups we found were followed by a positive` +
+        ` 21-day return ${winRate.toFixed(0)}% of the time (median ${median >= 0 ? '+' : ''}${median.toFixed(1)}%).`;
+    }
+
+    return sentence;
   };
 
   const marketSignal = getMarketSignal(marketFactors);
@@ -1449,6 +1513,240 @@ export default function OptionsAnalyticsDashboardPage() {
           )}
 
           <SectionHeader
+            icon="🌤️"
+            title="The Weather"
+            goal="See how unusual today's options pricing is, compared to every other ticker today."
+          />
+          {horizonData && horizonData.status === 'ok' && Object.keys(horizonData.fingerprint).length > 0 ? (
+            <Paper sx={{ p: 2, mt: 1 }}>
+              <Grid container spacing={3}>
+                {Object.entries(FINGERPRINT_FEATURE_META).map(([key, meta]) => {
+                  const pct = horizonData.fingerprint[key];
+                  if (pct == null) return null;
+                  return (
+                    <Grid item xs={12} md={4} key={key}>
+                      <PercentileGauge label={meta.label} percentile={pct} status={getPercentileStatus(key, pct)} />
+                    </Grid>
+                  );
+                })}
+              </Grid>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                Cross-sectional percentile vs. every other ticker on {horizonData.as_of_date} -- based on
+                the nearest options expiration each day, not the expiration selected above.
+              </Typography>
+            </Paper>
+          ) : (
+            <Paper sx={{ p: 2, mt: 1 }}>
+              <Typography variant="body2" color="text.secondary">
+                {horizonData?.status === 'insufficient_fingerprint'
+                  ? 'No IV/VRP/GEX percentile data yet for this ticker today.'
+                  : 'No percentile data available for this ticker yet.'}
+              </Typography>
+            </Paper>
+          )}
+
+          <SectionHeader
+            icon="📈"
+            title="The Forecast"
+            goal="See what the options market itself is pricing in for where the stock might go."
+          />
+          {displayOptionsMetrics && (
+            <Paper sx={{ p: 2, mt: 1 }}>
+              <Grid container spacing={4}>
+                <Grid item xs={12} md={6}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                    Price Range (~68% Confidence, to Expiration)
+                  </Typography>
+                  {displayOptionsMetrics.expected_move != null && displayOptionsMetrics.underlying_price != null ? (
+                    <>
+                      <Typography variant="h6" sx={{ mt: 1 }}>
+                        ${(displayOptionsMetrics.underlying_price - displayOptionsMetrics.expected_move).toFixed(2)}
+                        {' – '}
+                        ${(displayOptionsMetrics.underlying_price + displayOptionsMetrics.expected_move).toFixed(2)}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                        Derived from the at-the-money straddle price -- the options market&apos;s own implied
+                        1-standard-deviation move to expiration, not a directional prediction.
+                      </Typography>
+                    </>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                      Not available for this ticker.
+                    </Typography>
+                  )}
+                </Grid>
+                <Grid item xs={12} md={6}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                    Key Levels vs. Spot
+                  </Typography>
+                  <Table size="small" sx={{ mt: 1 }}>
+                    <TableBody>
+                      {[
+                        { label: 'Put Wall (support)', strike: displayAnalysisData?.put_wall?.strike },
+                        { label: 'Gamma Flip', strike: displayAnalysisData?.flip_level?.strike },
+                        { label: 'Call Wall (resistance)', strike: displayAnalysisData?.call_wall?.strike },
+                      ].map(({ label, strike }) => {
+                        const spot = displayAnalysisData?.spot_price;
+                        const distancePct = strike != null && spot ? ((strike - spot) / spot) * 100 : null;
+                        return (
+                          <TableRow key={label}>
+                            <TableCell>{label}</TableCell>
+                            <TableCell align="right">
+                              {strike != null ? `$${Number(strike).toFixed(2)}` : '—'}
+                            </TableCell>
+                            <TableCell
+                              align="right"
+                              sx={{ color: distancePct == null ? 'text.secondary' : distancePct >= 0 ? 'success.main' : 'error.main' }}
+                            >
+                              {distancePct != null ? `${distancePct >= 0 ? '+' : ''}${distancePct.toFixed(1)}%` : '—'}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                    Real dealer-positioning levels, not a probability -- how likely price is to reach them
+                    isn&apos;t something this dashboard estimates.
+                  </Typography>
+                </Grid>
+              </Grid>
+            </Paper>
+          )}
+
+          <SectionHeader
+            icon="🔭"
+            title="The Horizon"
+            goal="See what actually happened after similar setups in the past -- real historical outcomes, not a model prediction."
+          />
+          {horizonData && horizonData.status === 'ok' ? (
+            <Paper sx={{ p: 2, mt: 1 }}>
+              <Grid container spacing={4}>
+                {[5, 21].map((days) => {
+                  const stats = horizonData.horizons?.[String(days)];
+                  if (!stats) return null;
+                  return (
+                    <Grid item xs={12} md={6} key={days}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                        {days}-Day Outlook
+                      </Typography>
+                      {stats.sample_size > 0 ? (
+                        <>
+                          <Table size="small" sx={{ mt: 1 }}>
+                            <TableBody>
+                              <TableRow>
+                                <TableCell>Median</TableCell>
+                                <TableCell
+                                  align="right"
+                                  sx={{ color: stats.median_return_pct >= 0 ? 'success.main' : 'error.main', fontWeight: 600 }}
+                                >
+                                  {stats.median_return_pct >= 0 ? '+' : ''}
+                                  {stats.median_return_pct.toFixed(1)}%
+                                </TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell>Worst</TableCell>
+                                <TableCell align="right" sx={{ color: 'error.main', fontWeight: 600 }}>
+                                  {stats.worst_return_pct.toFixed(1)}%
+                                </TableCell>
+                              </TableRow>
+                              <TableRow>
+                                <TableCell>Win Rate</TableCell>
+                                <TableCell align="right" sx={{ fontWeight: 600 }}>
+                                  {stats.win_rate_pct.toFixed(0)}%
+                                </TableCell>
+                              </TableRow>
+                            </TableBody>
+                          </Table>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                            Based on {stats.sample_size} historical instance{stats.sample_size === 1 ? '' : 's'} with
+                            a similar percentile fingerprint (±{horizonData.tolerance_pct}pts).
+                          </Typography>
+                        </>
+                      ) : (
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                          No historical matches found yet -- feature_percentiles&apos; history is still short. This
+                          will fill in as more days accumulate.
+                        </Typography>
+                      )}
+                    </Grid>
+                  );
+                })}
+              </Grid>
+
+              <Box sx={{ mt: 3, pt: 2, borderTop: '1px solid', borderColor: 'divider' }}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                  Scenarios (21-Day, Same Matches)
+                </Typography>
+                {(() => {
+                  const stats21 = horizonData.horizons?.['21'];
+                  if (!stats21 || stats21.sample_size === 0) {
+                    return (
+                      <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
+                        No historical matches yet to break down into outcome buckets.
+                      </Typography>
+                    );
+                  }
+                  const bucketLabels = {
+                    strong_down: 'Sharp Drop (< -5%)',
+                    down: 'Down (-5% to -1%)',
+                    flat: 'Roughly Flat (-1% to +1%)',
+                    up: 'Up (+1% to +5%)',
+                    strong_up: 'Sharp Rally (> +5%)',
+                  };
+                  const bucketColor = (label) => {
+                    if (label === 'strong_up' || label === 'up') return 'success.main';
+                    if (label === 'strong_down' || label === 'down') return 'error.main';
+                    return 'action.disabledBackground';
+                  };
+                  return (
+                    <>
+                      <Box sx={{ display: 'flex', alignItems: 'flex-end', gap: 0.5, height: 48, mt: 1.5, mb: 1 }}>
+                        {stats21.buckets.map((b) => (
+                          <Box
+                            key={b.label}
+                            title={`${bucketLabels[b.label]}: ${((b.fraction || 0) * 100).toFixed(0)}%`}
+                            sx={{
+                              flex: 1,
+                              height: `${Math.max(4, (b.fraction || 0) * 100)}%`,
+                              backgroundColor: bucketColor(b.label),
+                              borderRadius: '2px 2px 0 0',
+                            }}
+                          />
+                        ))}
+                      </Box>
+                      <Box sx={{ display: 'flex', gap: 0.5 }}>
+                        {stats21.buckets.map((b) => (
+                          <Box key={b.label} sx={{ flex: 1, textAlign: 'center' }}>
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                              {bucketLabels[b.label]}
+                            </Typography>
+                            <Typography variant="body2" sx={{ fontWeight: 600 }}>
+                              {((b.fraction || 0) * 100).toFixed(0)}%
+                            </Typography>
+                          </Box>
+                        ))}
+                      </Box>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
+                        Real outcome distribution across the same {stats21.sample_size} historical matches
+                        above -- not named scenarios with modeled probabilities.
+                      </Typography>
+                    </>
+                  );
+                })()}
+              </Box>
+            </Paper>
+          ) : (
+            <Paper sx={{ p: 2, mt: 1 }}>
+              <Typography variant="body2" color="text.secondary">
+                {horizonData?.status === 'insufficient_fingerprint'
+                  ? "No IV/VRP/GEX percentile data yet for this ticker today -- The Horizon needs at least one of those to search for historical analogs."
+                  : 'No historical-analog data available for this ticker yet.'}
+              </Typography>
+            </Paper>
+          )}
+
+          <SectionHeader
             icon="🎯"
             title="Executive Signal & Strategy Overview"
             goal="Combine all market signals into one simple conclusion and trading suggestion."
@@ -1486,7 +1784,8 @@ export default function OptionsAnalyticsDashboardPage() {
                     )}
 
                     <Typography variant="body2" sx={{ mt: 1 }}>
-                      <strong>Overall:</strong> {getOverallSummary(marketFactors, marketSignal)}
+                      <strong>Overall:</strong>{' '}
+                      {getOverallSummary(marketFactors, marketSignal, horizonData?.horizons?.['21'])}
                     </Typography>
                   </>
                 ) : (

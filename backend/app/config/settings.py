@@ -399,6 +399,7 @@ class Settings(BaseSettings):
     # Feature normalization layer (feature_percentiles) configuration
     feature_percentiles_trailing_window_days: int = 252  # Trailing trading-day window for self percentile/z-score
     feature_percentiles_min_sample_size: int = 60  # Below this many trailing observations, pct_self_252d/z_self_252d are NULL (sample_size_self is still recorded)
+    options_horizon_tolerance_pct: float = 10.0  # Historical-analog matching band (percentile points) for The Horizon panel
 
     # Cache Configuration
     cache_redis_db: int = 2  # Separate DB for cache data

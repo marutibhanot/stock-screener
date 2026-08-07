@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 
 class StrikeExposure(BaseModel):
@@ -88,3 +88,42 @@ class OptionsMetricsResponse(BaseModel):
     is_stale_fallback: Optional[bool] = None
     snapshot_trading_date: Optional[str] = None
     snapshot_fetched_at: Optional[str] = None
+
+
+class HorizonBucketResponse(BaseModel):
+    """One outcome bucket (e.g. 'down', 'flat', 'up') from the real
+    forward-return distribution of historical analog matches -- not a
+    named scenario with an invented probability, see horizon.py."""
+
+    label: str
+    lower_pct: Optional[float] = None
+    upper_pct: Optional[float] = None
+    count: int
+    fraction: Optional[float] = None  # None when sample_size == 0
+
+
+class HorizonWindowStats(BaseModel):
+    trading_days: int
+    sample_size: int
+    median_return_pct: Optional[float] = None
+    worst_return_pct: Optional[float] = None
+    win_rate_pct: Optional[float] = None
+    buckets: List[HorizonBucketResponse] = []
+
+
+class OptionsHorizonResponse(BaseModel):
+    """Historical-analog forward-outcome search ("The Horizon" panel).
+
+    status: "ok" | "insufficient_fingerprint" | "no_data" -- the frontend
+    must branch on this rather than assume horizons is always populated;
+    sample_size inside each window can also legitimately be 0 even when
+    status is "ok" (a valid fingerprint with zero historical matches).
+    """
+
+    status: str
+    ticker: str
+    as_of_date: Optional[str] = None
+    fingerprint: Dict[str, float] = {}
+    tolerance_pct: float
+    horizons: Dict[str, HorizonWindowStats] = {}
+    reason: Optional[str] = None
