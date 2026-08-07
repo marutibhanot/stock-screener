@@ -9,8 +9,6 @@ import {
   CircularProgress,
   Paper,
   Grid,
-  Card,
-  CardContent,
   Alert,
   Chip,
   Autocomplete,
@@ -927,14 +925,14 @@ export default function OptionsAnalyticsDashboardPage() {
 
           {/* GEX Summary */}
           {gexRow && (
-            <Paper sx={{ p: 2, mb: 3 }}>
+            <Box sx={{ mb: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                 <Typography variant="h6">
                   What does this tell us? {selectedExpiration ? `(Live: ${selectedExpiration})` : ''}
                 </Typography>
                 <LastUpdated timestamp={gexRow.fetched_at} />
               </Box>
-              <Typography variant="body2" sx={{ mb: 2 }}>
+              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 GEX shows how option dealers (big banks/market makers) are likely to react when the stock price
                 moves. Their buying and selling can either calm the price down or make moves bigger.
               </Typography>
@@ -944,8 +942,7 @@ export default function OptionsAnalyticsDashboardPage() {
               </Typography>
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6} md={4}>
-                  <Card sx={{ height: '100%' }}>
-                    <CardContent>
+                  <Paper sx={{ p: 2, height: '100%' }}>
                       <Typography color="textSecondary">Call GEX</Typography>
                       <Typography variant="h6">
                         {gexRow.call_gex?.toFixed(2) || 'N/A'}
@@ -967,12 +964,10 @@ export default function OptionsAnalyticsDashboardPage() {
                           </Typography>
                         </>
                       )}
-                    </CardContent>
-                  </Card>
+                  </Paper>
                 </Grid>
                 <Grid item xs={12} sm={6} md={4}>
-                  <Card sx={{ height: '100%' }}>
-                    <CardContent>
+                  <Paper sx={{ p: 2, height: '100%' }}>
                       <Typography color="textSecondary">Put GEX</Typography>
                       <Typography variant="h6">
                         {gexRow.put_gex?.toFixed(2) || 'N/A'}
@@ -994,12 +989,10 @@ export default function OptionsAnalyticsDashboardPage() {
                           </Typography>
                         </>
                       )}
-                    </CardContent>
-                  </Card>
+                  </Paper>
                 </Grid>
                 <Grid item xs={12} sm={6} md={4}>
-                  <Card sx={{ height: '100%' }}>
-                    <CardContent>
+                  <Paper sx={{ p: 2, height: '100%' }}>
                       <Typography color="textSecondary">Total GEX</Typography>
                       <Typography variant="h6">
                         {gexRow.total_gex?.toFixed(2) || 'N/A'}
@@ -1021,16 +1014,15 @@ export default function OptionsAnalyticsDashboardPage() {
                           </Box>
                         </>
                       )}
-                    </CardContent>
-                  </Card>
+                  </Paper>
                 </Grid>
               </Grid>
-            </Paper>
+            </Box>
           )}
 
           {/* Structural Levels - Call Wall, Put Wall, Flip Level */}
           {displayAnalysisData && (
-            <Paper sx={{ p: 2, mb: 3 }}>
+            <Box sx={{ mb: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h6">
                   📍 Important Price Levels {selectedExpiration ? `(Live: ${selectedExpiration})` : '(Live: nearest expiration)'}
@@ -1079,8 +1071,7 @@ export default function OptionsAnalyticsDashboardPage() {
                   <>
                     <Grid container spacing={2}>
                       <Grid item xs={12} sm={6} md={3}>
-                        <Card sx={{ height: '100%' }}>
-                          <CardContent>
+                        <Paper sx={{ p: 2, height: '100%' }}>
                             <Typography color="textSecondary">Current Stock Price</Typography>
                             <Typography variant="h6">
                               ${spot?.toFixed(2) || 'N/A'}
@@ -1088,12 +1079,10 @@ export default function OptionsAnalyticsDashboardPage() {
                             <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
                               This is where the stock is trading now -- the point every level below is measured against.
                             </Typography>
-                          </CardContent>
-                        </Card>
+                        </Paper>
                       </Grid>
                       <Grid item xs={12} sm={6} md={3}>
-                        <Card sx={{ height: '100%' }}>
-                          <CardContent>
+                        <Paper sx={{ p: 2, height: '100%' }}>
                             <Typography color="textSecondary">Call Wall</Typography>
                             <Typography variant="h6">
                               {formatStrike(callWallStrike)}
@@ -1119,12 +1108,10 @@ export default function OptionsAnalyticsDashboardPage() {
                                     : `The stock has about $${roomToCallWall.toFixed(2)} room to move upward before hitting this level.`}
                               </Typography>
                             )}
-                          </CardContent>
-                        </Card>
+                        </Paper>
                       </Grid>
                       <Grid item xs={12} sm={6} md={3}>
-                        <Card sx={{ height: '100%' }}>
-                          <CardContent>
+                        <Paper sx={{ p: 2, height: '100%' }}>
                             <Typography color="textSecondary">Put Wall</Typography>
                             <Typography variant="h6">
                               {formatStrike(putWallStrike)}
@@ -1150,12 +1137,10 @@ export default function OptionsAnalyticsDashboardPage() {
                                     : `The stock has about $${distanceToPutWall.toFixed(2)} room to move downward before reaching this level.`}
                               </Typography>
                             )}
-                          </CardContent>
-                        </Card>
+                        </Paper>
                       </Grid>
                       <Grid item xs={12} sm={6} md={3}>
-                        <Card sx={{ height: '100%' }}>
-                          <CardContent>
+                        <Paper sx={{ p: 2, height: '100%' }}>
                             <Typography color="textSecondary">Flip Level</Typography>
                             <Typography variant="h6">
                               {formatStrike(flipLevelStrike)}
@@ -1173,8 +1158,7 @@ export default function OptionsAnalyticsDashboardPage() {
                                 <strong>Current situation:</strong> The stock is {flipZone}.
                               </Typography>
                             )}
-                          </CardContent>
-                        </Card>
+                        </Paper>
                       </Grid>
                     </Grid>
                     {invalidStructuralLevels && (
@@ -1288,7 +1272,7 @@ export default function OptionsAnalyticsDashboardPage() {
                   ? `ℹ️ Live term structure computed just now for ${selectedExpiration}`
                   : 'ℹ️ Live yfinance option-chain compute for the nearest expiration -- see the timestamp above for exactly when (may be a recent cache hit, not necessarily this instant).'}
               </Typography>
-            </Paper>
+            </Box>
           )}
 
           {/* Strike-level dealer positioning -- shares the live payload with
@@ -1342,7 +1326,7 @@ export default function OptionsAnalyticsDashboardPage() {
 
           {/* Max Pain Summary */}
           {maxPainRow && (
-            <Paper sx={{ p: 2, mb: 3 }}>
+            <Box sx={{ mb: 3 }}>
               <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                 <Typography variant="h6">
                   Max Pain Analysis {selectedExpiration ? `(Live: ${selectedExpiration})` : ''}
@@ -1351,8 +1335,7 @@ export default function OptionsAnalyticsDashboardPage() {
               </Box>
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card sx={{ height: '100%' }}>
-                    <CardContent>
+                  <Paper sx={{ p: 2, height: '100%' }}>
                       <Typography color="textSecondary">🎯 Max Pain Price</Typography>
                       <Typography variant="h6">
                         ${maxPainRow.max_pain?.toFixed(2) || 'N/A'}
@@ -1365,12 +1348,10 @@ export default function OptionsAnalyticsDashboardPage() {
                         price as option expiration approaches. It is only one indicator and should never be used by
                         itself to predict price.
                       </Typography>
-                    </CardContent>
-                  </Card>
+                  </Paper>
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card sx={{ height: '100%' }}>
-                    <CardContent>
+                  <Paper sx={{ p: 2, height: '100%' }}>
                       <Typography color="textSecondary">📏 Distance from Max Pain</Typography>
                       <Typography variant="h6">
                         {maxPainRow.distance_pct != null ? `${Math.abs(maxPainRow.distance_pct).toFixed(2)}%` : 'N/A'}
@@ -1385,12 +1366,10 @@ export default function OptionsAnalyticsDashboardPage() {
                           </Typography>
                         </>
                       )}
-                    </CardContent>
-                  </Card>
+                  </Paper>
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card sx={{ height: '100%' }}>
-                    <CardContent>
+                  <Paper sx={{ p: 2, height: '100%' }}>
                       <Typography color="textSecondary">📈 Call Positions (Call OI)</Typography>
                       <Typography variant="h6">
                         {maxPainRow.call_oi?.toLocaleString() || 'N/A'}
@@ -1403,12 +1382,10 @@ export default function OptionsAnalyticsDashboardPage() {
                       <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
                         <strong>What this means:</strong> {callOiStatus?.description}
                       </Typography>
-                    </CardContent>
-                  </Card>
+                  </Paper>
                 </Grid>
                 <Grid item xs={12} sm={6} md={3}>
-                  <Card sx={{ height: '100%' }}>
-                    <CardContent>
+                  <Paper sx={{ p: 2, height: '100%' }}>
                       <Typography color="textSecondary">📉 Put Positions (Put OI)</Typography>
                       <Typography variant="h6">
                         {maxPainRow.put_oi?.toLocaleString() || 'N/A'}
@@ -1421,18 +1398,17 @@ export default function OptionsAnalyticsDashboardPage() {
                       <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
                         <strong>What this means:</strong> {putOiStatus?.description}
                       </Typography>
-                    </CardContent>
-                  </Card>
+                  </Paper>
                 </Grid>
               </Grid>
-            </Paper>
+            </Box>
           )}
 
           {displayOptionsMetrics && (
             <>
               <LastUpdated timestamp={displayOptionsMetrics.computed_at} sx={{ display: 'block', mb: 1 }} />
               <SummaryCards data={displayOptionsMetrics} sections={['flow']} />
-              <Paper sx={{ p: 2, mb: 2 }}>
+              <Box sx={{ mb: 2 }}>
                 <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
                   🔥 Unusual Options Activity
                 </Typography>
@@ -1444,7 +1420,7 @@ export default function OptionsAnalyticsDashboardPage() {
                   it does not tell you whether traders are buying or selling those contracts. Think of it as a
                   signal to investigate further, not as a buy or sell signal.
                 </Typography>
-              </Paper>
+              </Box>
               <UnusualVolumeTable contracts={displayOptionsMetrics.unusual_volume} />
             </>
           )}
