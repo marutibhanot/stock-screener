@@ -6,6 +6,7 @@ Uses in-memory fakes from conftest.py — no DB, no mocks, pure behaviour tests.
 from __future__ import annotations
 
 import inspect
+from concurrent.futures import Future
 from datetime import date
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -859,6 +860,134 @@ class TestBulkDataPreparation:
 
         assert result.status == RunStatus.PUBLISHED.value
         assert provider.bulk_calls == [["AAPL", "MSFT", "GOOGL", "NVDA"]]
+
+    @_PATCH_TRADING_DAY
+    def test_static_daily_mode_uses_process_pool_when_scanner_factory_provided(self, _mock_td):
+        """When a scanner_factory is injected, bulk-prefetch parallel scans route
+        through ProcessPoolExecutor instead of ThreadPoolExecutor (real OS
+        processes bypass the GIL for CPU-bound detector work). Without a
+        scanner_factory (the default used by every other test in this file),
+        the existing ThreadPoolExecutor path is untouched.
+        """
+        uow, _ = _make_uow(symbols=["AAPL", "MSFT", "GOOGL"])
+
+        class BulkAwareScanner:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def get_merged_requirements(self, screener_names, criteria=None):
+                return {"needs": "price+fundamentals"}
+
+            def scan_stock_multi(self, symbol: str, **_kwargs) -> dict:
+                self.calls.append(symbol)
+                return {
+                    "composite_score": 75.0,
+                    "rating": "Buy",
+                    "passes_template": True,
+                    "current_price": 100.0,
+                }
+
+        class _FakeProcessPoolExecutor:
+            instances: list["_FakeProcessPoolExecutor"] = []
+
+            def __init__(self, *, max_workers, initializer):
+                self.max_workers = max_workers
+                self.initializer = initializer
+                self.submitted: list[tuple] = []
+                self.shutdown_called = False
+                _FakeProcessPoolExecutor.instances.append(self)
+
+            def submit(self, fn, *args):
+                self.submitted.append((fn, args))
+                # A real Future, not a bare stand-in -- as_completed() reaches
+                # into Future-internal state (_condition) that only a real
+                # instance provides.
+                future: Future = Future()
+                future.set_result(fn(*args))
+                return future
+
+            def shutdown(self, wait=True, cancel_futures=False):
+                self.shutdown_called = True
+
+        _FakeProcessPoolExecutor.instances = []
+        scanner = BulkAwareScanner()
+        use_case = BuildDailyFeatureSnapshotUseCase(
+            scanner=scanner,
+            data_provider=FakeStockDataProvider(),
+            scanner_factory=lambda: scanner,
+        )
+
+        with patch(
+            "app.use_cases.feature_store.build_daily_snapshot.ProcessPoolExecutor",
+            _FakeProcessPoolExecutor,
+        ):
+            result = use_case.execute(
+                uow,
+                _make_cmd(
+                    chunk_size=3,
+                    require_bulk_prefetch=True,
+                    batch_only_prices=True,
+                    batch_only_fundamentals=True,
+                    static_parallel_workers=2,
+                ),
+                FakeProgressSink(),
+                FakeCancellationToken(),
+            )
+
+        assert result.status == RunStatus.PUBLISHED.value
+        assert sorted(scanner.calls) == ["AAPL", "GOOGL", "MSFT"]
+        assert len(_FakeProcessPoolExecutor.instances) == 1
+        pool = _FakeProcessPoolExecutor.instances[0]
+        assert pool.max_workers == 2
+        assert pool.shutdown_called is True
+        assert len(pool.submitted) == 3
+
+    @_PATCH_TRADING_DAY
+    def test_static_daily_mode_without_scanner_factory_still_uses_thread_pool(self, _mock_td):
+        """Default DI (no scanner_factory) must never construct a ProcessPoolExecutor."""
+        uow, _ = _make_uow(symbols=["AAPL", "MSFT", "GOOGL"])
+
+        class BulkAwareScanner:
+            def __init__(self) -> None:
+                self.calls: list[str] = []
+
+            def get_merged_requirements(self, screener_names, criteria=None):
+                return {"needs": "price+fundamentals"}
+
+            def scan_stock_multi(self, symbol: str, **_kwargs) -> dict:
+                self.calls.append(symbol)
+                return {
+                    "composite_score": 75.0,
+                    "rating": "Buy",
+                    "passes_template": True,
+                    "current_price": 100.0,
+                }
+
+        scanner = BulkAwareScanner()
+        use_case = BuildDailyFeatureSnapshotUseCase(
+            scanner=scanner,
+            data_provider=FakeStockDataProvider(),
+        )
+
+        with patch(
+            "app.use_cases.feature_store.build_daily_snapshot.ProcessPoolExecutor",
+            side_effect=AssertionError("must not construct a process pool without scanner_factory"),
+        ):
+            result = use_case.execute(
+                uow,
+                _make_cmd(
+                    chunk_size=3,
+                    require_bulk_prefetch=True,
+                    batch_only_prices=True,
+                    batch_only_fundamentals=True,
+                    static_parallel_workers=2,
+                ),
+                FakeProgressSink(),
+                FakeCancellationToken(),
+            )
+
+        assert result.status == RunStatus.PUBLISHED.value
+        assert sorted(scanner.calls) == ["AAPL", "GOOGL", "MSFT"]
 
     @_PATCH_TRADING_DAY
     def test_bootstrap_gate_uses_injected_coverage_evaluator(self, _mock_td):

@@ -45,6 +45,7 @@ from .ui_view_snapshot import UIViewSnapshot, UIViewSnapshotPointer
 from .gex import GexSnapshot, GexBatch
 from .iv_history import IvHistory
 from .options_metrics_snapshot import OptionsMetricsSnapshot
+from .feature_percentile import FeaturePercentile
 from app.infra.db.models.feature_store import (
     FeatureRun, FeatureRunUniverseSymbol, StockFeatureDaily, FeatureRunPointer,
 )
@@ -128,6 +129,7 @@ __all__ = [
     "GexBatch",
     "IvHistory",
     "OptionsMetricsSnapshot",
+    "FeaturePercentile",
     # Feature Store
     "FeatureRun",
     "FeatureRunUniverseSymbol",

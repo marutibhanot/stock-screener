@@ -587,6 +587,21 @@ def _build_cache_warmup_beat_schedule(enabled_markets: list[str]) -> dict:
         # (see comment above). Both tasks remain registered in
         # task_registry_service.SCHEDULED_TASKS for manual/independent
         # triggering from the Scheduled Tasks dashboard.
+
+        # feature_percentiles is NOT chained from the options pipeline above:
+        # its last stage (batch_analyze_options_exposure) fans out one task
+        # per symbol and returns as soon as they're queued, with no
+        # completion signal to chain from. 19:30 ET is a generous guessed
+        # buffer (~2h) after the 17:30 pipeline start for max_pain -> gex ->
+        # the options fan-out to have drained on a normal day -- not a
+        # guarantee (same caveat as the old fixed-offset gaps this pipeline
+        # otherwise moved away from). Stragglers on an unusually slow day are
+        # recovered via backend/app/scripts/backfill_feature_percentiles.py,
+        # not auto-retried by this schedule.
+        'daily-feature-percentiles': {
+            'task': 'app.tasks.feature_percentile_tasks.compute_daily',
+            'schedule': crontab(hour=19, minute=30),
+        },
     }
 
     # Merge shared entries into the fanned-out schedule.

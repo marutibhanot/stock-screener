@@ -19,10 +19,10 @@ from __future__ import annotations
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Iterator, Sequence
+from typing import Callable, Iterator, Sequence
 
 from app.domain.common.errors import EntityNotFoundError
 from app.domain.common.uow import UnitOfWork
@@ -67,6 +67,78 @@ def _should_persist_result(result: object) -> bool:
         return False
 
     return result.get("rating") != "Insufficient Data"
+
+
+ScannerFactory = Callable[[], StockScanner]
+
+
+def _init_scan_worker() -> None:
+    """ProcessPoolExecutor initializer for the cache-only bulk scan pool.
+
+    Each worker is a fresh OS process (forked from the Celery worker on
+    Linux/Docker) that inherits the parent's SQLAlchemy engine and open
+    connections. Those must be disposed before this process opens its own —
+    mirrors app.celery_app._dispose_engine_after_fork, which does the same
+    thing for Celery's own prefork workers.
+    """
+    try:
+        from app.database import engine
+
+        engine.dispose()
+    except Exception:
+        logger.warning(
+            "Failed to dispose inherited DB engine in scan worker",
+            exc_info=True,
+        )
+    from app.wiring.bootstrap import initialize_process_runtime_services
+
+    initialize_process_runtime_services(force=True)
+
+
+def _scan_symbol_in_worker_process(
+    symbol: str,
+    screener_names: list[str],
+    criteria: dict,
+    composite_method: str,
+    merged_requirements: object | None,
+    symbol_data: object | None,
+    cache_only: bool,
+    scanner_factory: ScannerFactory,
+) -> tuple[str, dict | None, bool, bool]:
+    """Single-symbol scan run inside a ProcessPoolExecutor worker.
+
+    Only reached for chunks where every symbol's data was already bulk
+    prefetched (see the cache_only/prefetch_covers_chunk gate in _run), so
+    this is pure CPU-bound detector work with no per-symbol network/DB I/O.
+    Must stay a module-level function (not a closure) so it can be pickled
+    across the process boundary.
+    """
+    sym = symbol.upper()
+    if cache_only and symbol_data is None:
+        return (sym, None, False, False)
+    scan_kwargs: dict[str, object] = {}
+    if merged_requirements is not None:
+        scan_kwargs["pre_merged_requirements"] = merged_requirements
+    if symbol_data is not None:
+        scan_kwargs["pre_fetched_data"] = symbol_data
+    try:
+        scanner = scanner_factory()
+        result = scanner.scan_stock_multi(
+            symbol=sym,
+            screener_names=screener_names,
+            criteria=criteria,
+            composite_method=composite_method,
+            **scan_kwargs,
+        )
+        persistable = _should_persist_result(result)
+        passed_flag = (
+            bool(result.get("passes_template"))
+            if isinstance(result, dict)
+            else False
+        )
+        return (sym, result, passed_flag, persistable)
+    except Exception:
+        return (sym, None, False, False)
 
 
 # ── Command (input) ──────────────────────────────────────────────────────
@@ -121,10 +193,16 @@ class RunBulkScanUseCase:
         scanner: StockScanner,
         data_provider: StockDataProvider | None = None,
         market_rs_reader: MarketRsReader | None = None,
+        scanner_factory: ScannerFactory | None = None,
     ) -> None:
         self._scanner = scanner
         self._data_provider = data_provider
         self._market_rs_reader = market_rs_reader
+        # Optional picklable factory for rebuilding an equivalent scanner
+        # inside a ProcessPoolExecutor worker (see _scan_symbol_in_worker_process).
+        # None (the default used by every test double) keeps the existing
+        # thread-based path with the injected `scanner` unchanged.
+        self._scanner_factory = scanner_factory
 
     def execute(
         self,
@@ -264,6 +342,72 @@ class RunBulkScanUseCase:
         passed = getattr(scan, "passed_stocks", 0) or 0
         failed = 0
         start_time = time.monotonic()
+
+        # A process pool is only safe/useful for cache_only scans: _scan_one
+        # (and its process-pool twin) never falls through to a live per-symbol
+        # fetch there, so every symbol the pool actually processes is pure
+        # CPU-bound detector work with no per-symbol network/DB I/O. Manual
+        # user scans (the ones that can cover the full ~10k-symbol universe)
+        # always run cache_only — see app/tasks/scan_tasks.py.
+        use_process_pool = (
+            self._scanner_factory is not None
+            and cmd.cache_only
+            and cmd.parallel_workers > 1
+        )
+        process_pool: ProcessPoolExecutor | None = None
+        if use_process_pool:
+            process_pool = ProcessPoolExecutor(
+                max_workers=cmd.parallel_workers,
+                initializer=_init_scan_worker,
+            )
+
+        try:
+            return self._scan_chunks(
+                uow=uow,
+                cmd=cmd,
+                progress=progress,
+                cancel=cancel,
+                remaining_symbols=remaining_symbols,
+                screener_names=screener_names,
+                composite_method=composite_method,
+                merged_requirements=merged_requirements,
+                default_market=default_market,
+                rs_publication_by_market=rs_publication_by_market,
+                total=total,
+                already_done=already_done,
+                processed=processed,
+                passed=passed,
+                failed=failed,
+                start_time=start_time,
+                use_process_pool=use_process_pool,
+                process_pool=process_pool,
+            )
+        finally:
+            if process_pool is not None:
+                process_pool.shutdown(wait=True, cancel_futures=True)
+
+    def _scan_chunks(
+        self,
+        *,
+        uow: UnitOfWork,
+        cmd: RunBulkScanCommand,
+        progress: ProgressSink,
+        cancel: CancellationToken,
+        remaining_symbols: list[str],
+        screener_names: list[str],
+        composite_method: str,
+        merged_requirements: object | None,
+        default_market: str,
+        rs_publication_by_market: dict[str, tuple[str, int | None, date | None]],
+        total: int,
+        already_done: int,
+        processed: int,
+        passed: int,
+        failed: int,
+        start_time: float,
+        use_process_pool: bool,
+        process_pool: ProcessPoolExecutor | None,
+    ) -> RunBulkScanResult:
         for chunk in _chunked(remaining_symbols, cmd.chunk_size):
             # 5a — Cancellation gate
             if cancel.is_cancelled():
@@ -433,7 +577,31 @@ class RunBulkScanUseCase:
                 if cmd.cache_only or prefetch_covers_chunk
                 else 1
             )
-            if effective_workers > 1 and len(chunk) > 1:
+            if (
+                use_process_pool
+                and process_pool is not None
+                and prefetch_covers_chunk
+                and len(chunk) > 1
+            ):
+                # CPU-bound detector work runs in real OS processes here, not
+                # GIL-bound threads — see _scan_symbol_in_worker_process.
+                futures = {
+                    process_pool.submit(
+                        _scan_symbol_in_worker_process,
+                        symbol,
+                        screener_names,
+                        cmd.criteria,
+                        composite_method,
+                        merged_requirements,
+                        pre_fetched_data.get(symbol.upper()),
+                        cmd.cache_only,
+                        self._scanner_factory,
+                    ): index
+                    for index, symbol in enumerate(chunk)
+                }
+                for future in as_completed(futures):
+                    outcomes[futures[future]] = future.result()
+            elif effective_workers > 1 and len(chunk) > 1:
                 workers = min(effective_workers, len(chunk))
                 with ThreadPoolExecutor(max_workers=workers) as executor:
                     futures = {

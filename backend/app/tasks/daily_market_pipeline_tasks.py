@@ -254,6 +254,33 @@ def _build_daily_market_pipeline_signatures(market: str, trading_date: date) -> 
             market=market_code,
             calculation_date=as_of_date,
         ).set(queue=market_jobs_queue_for_market(market_code)),
+        # build_daily_snapshot moved here (was after group-rankings) --
+        # live-diagnosed 2026-08-06: calculate_daily_group_rankings_with_gapfill
+        # validates against the *latest published* FeatureRun's rs_as_of_date
+        # (see feature_store_tasks._resolve_latest_published_run_for_market ->
+        # feature_run_rs_identity.resolve_feature_run_rs_identity), which is
+        # only ever fresh for today if build_daily_snapshot already ran and
+        # published one -- but it was the LAST step in the chain, so on any
+        # day the previous published run wasn't already dated today, group
+        # rankings hit "Feature run RS date {stale} does not match ranking
+        # date {today}" and failed every time, chicken-and-egg. build_daily_
+        # snapshot's only real pipeline dependency is calculate_market_rs_
+        # snapshot's output (MarketRsRun/StockRsSnapshot, read via
+        # SqlMarketRsReader) -- confirmed no dependency on breadth, exposure,
+        # or group-rankings output in either direction -- so moving it here,
+        # right after the RS guard, is safe and makes today's FeatureRun
+        # exist (published, correct rs_as_of_date) before group-rankings
+        # ever looks for it.
+        build_daily_snapshot.si(
+            market=market_code,
+            as_of_date_str=as_of_date,
+            universe_name=_daily_pipeline_universe_name(market_code),
+            publish_pointer_key=f"latest_published_market:{market_code}",
+            static_daily_mode=True,
+        ).set(queue=market_jobs_queue_for_market(market_code)),
+        guard_snapshot_result.s(market=market_code).set(
+            queue=market_jobs_queue_for_market(market_code)
+        ),
         calculate_daily_breadth_with_gapfill.si(
             market=market_code,
             calculation_date=as_of_date,
@@ -280,16 +307,6 @@ def _build_daily_market_pipeline_signatures(market: str, trading_date: date) -> 
             queue=market_jobs_queue_for_market(market_code)
         ),
         guard_group_result.s(market=market_code).set(
-            queue=market_jobs_queue_for_market(market_code)
-        ),
-        build_daily_snapshot.si(
-            market=market_code,
-            as_of_date_str=as_of_date,
-            universe_name=_daily_pipeline_universe_name(market_code),
-            publish_pointer_key=f"latest_published_market:{market_code}",
-            static_daily_mode=True,
-        ).set(queue=market_jobs_queue_for_market(market_code)),
-        guard_snapshot_result.s(market=market_code).set(
             queue=market_jobs_queue_for_market(market_code)
         ),
     ]

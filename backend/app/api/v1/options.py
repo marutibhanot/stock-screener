@@ -22,7 +22,14 @@ from ...services.options_metrics import (
 )
 from ...services.options_snapshot_upsert import upsert_snapshot, trading_date_for
 from ...services.symbol_format import normalize_symbol
-from ...schemas.options_metrics import OptionsMetricsResponse
+from ...services.feature_percentiles.horizon import HorizonResult, compute_horizon
+from ...config import settings
+from ...schemas.options_metrics import (
+    HorizonBucketResponse,
+    HorizonWindowStats,
+    OptionsHorizonResponse,
+    OptionsMetricsResponse,
+)
 
 from ...services.yfinance_service import YFinanceService
 import yfinance as yf
@@ -346,6 +353,69 @@ async def get_options_term_structure(
         "trading_date": trading_date.isoformat(),
         **metrics,
     }
+
+
+def _horizon_result_to_response(result: HorizonResult) -> OptionsHorizonResponse:
+    return OptionsHorizonResponse(
+        status=result.status,
+        ticker=result.ticker,
+        as_of_date=result.as_of_date.isoformat() if result.as_of_date else None,
+        fingerprint=result.fingerprint,
+        tolerance_pct=result.tolerance_pct,
+        horizons={
+            str(trading_days): HorizonWindowStats(
+                trading_days=stats.trading_days,
+                sample_size=stats.sample_size,
+                median_return_pct=stats.median_return_pct,
+                worst_return_pct=stats.worst_return_pct,
+                win_rate_pct=stats.win_rate_pct,
+                buckets=[
+                    HorizonBucketResponse(
+                        label=b.label,
+                        lower_pct=b.lower_pct,
+                        upper_pct=b.upper_pct,
+                        count=b.count,
+                        fraction=b.fraction,
+                    )
+                    for b in stats.buckets
+                ],
+            )
+            for trading_days, stats in result.horizons.items()
+        },
+        reason=result.reason,
+        benchmark_ticker=result.benchmark_ticker,
+        benchmark_fingerprint=result.benchmark_fingerprint,
+    )
+
+
+@router.get("/horizon/{symbol}", response_model=OptionsHorizonResponse)
+async def get_options_horizon(symbol: str, db: Session = Depends(get_db)) -> OptionsHorizonResponse:
+    """Historical-analog forward-outcome search ("The Horizon" panel).
+
+    Searches feature_percentiles across every ticker/date for past rows
+    with a similar percentile fingerprint to `symbol` today (IV rank, VRP,
+    GEX -- see FINGERPRINT_FEATURES in horizon.py), then reports the REAL
+    forward return of the underlying (via stock_prices) for whichever
+    matches are old enough to have a complete forward window. No model, no
+    invented scenario taxonomy -- every number is arithmetic over real
+    historical rows, including sample_size, which will be honestly small
+    while feature_percentiles' history is still short.
+    """
+    normalized_symbol = normalize_symbol(symbol)
+    if normalized_symbol is None:
+        raise HTTPException(status_code=422, detail=f"Invalid symbol format: {symbol!r}")
+
+    try:
+        result = compute_horizon(
+            db,
+            normalized_symbol,
+            tolerance_pct=settings.options_horizon_tolerance_pct,
+        )
+    except Exception as exc:
+        logger.exception("Horizon computation failed for %s", normalized_symbol)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    return _horizon_result_to_response(result)
 
 
 @router.post("/metrics", response_model=OptionsMetricsResponse)

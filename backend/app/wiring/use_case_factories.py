@@ -88,6 +88,7 @@ def get_export_scan_results_use_case() -> ExportScanResultsUseCase:
 
 
 def get_run_bulk_scan_use_case() -> RunBulkScanUseCase:
+    from app.config.settings import settings
     from app.use_cases.scanning.run_bulk_scan import RunBulkScanUseCase
 
     runtime = resolve_runtime_services()
@@ -96,6 +97,11 @@ def get_run_bulk_scan_use_case() -> RunBulkScanUseCase:
         scanner=runtime.scan_orchestrator(),
         data_provider=runtime.stock_data_provider(),
         market_rs_reader=runtime.market_rs_reader(),
+        scanner_factory=(
+            build_worker_scan_orchestrator
+            if settings.scan_usecase_use_process_pool
+            else None
+        ),
     )
 
 
@@ -117,7 +123,21 @@ def get_compare_feature_runs_use_case() -> CompareFeatureRunsUseCase:
     return CompareFeatureRunsUseCase()
 
 
+def build_worker_scan_orchestrator():
+    """Resolve this OS process's own ScanOrchestrator singleton.
+
+    Passed to BuildDailyFeatureSnapshotUseCase as a picklable module-level
+    reference (never a closure) so a ProcessPoolExecutor worker can rebuild an
+    equivalent scanner locally instead of pickling the parent process's
+    instance across the fork/spawn boundary. Must only run after the pool's
+    initializer has rebuilt this process's RuntimeServices — see
+    app.use_cases.feature_store.build_daily_snapshot._init_snapshot_worker.
+    """
+    return resolve_runtime_services().scan_orchestrator()
+
+
 def get_build_daily_snapshot_use_case() -> BuildDailyFeatureSnapshotUseCase:
+    from app.config.settings import settings
     from app.services.bootstrap_cache_coverage import (
         evaluate_bootstrap_cache_coverage,
     )
@@ -133,6 +153,11 @@ def get_build_daily_snapshot_use_case() -> BuildDailyFeatureSnapshotUseCase:
         market_calendar=runtime.market_calendar_service(),
         market_rs_reader=runtime.market_rs_reader(),
         bootstrap_coverage_evaluator=evaluate_bootstrap_cache_coverage,
+        scanner_factory=(
+            build_worker_scan_orchestrator
+            if settings.static_snapshot_use_process_pool
+            else None
+        ),
     )
 
 

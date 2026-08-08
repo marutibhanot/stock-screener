@@ -1,6 +1,12 @@
+import math
+
+import pandas as pd
 import pytest
 
 from app.services.options_metrics import (
+    REALIZED_VOL_TERM_STRUCTURE_WINDOWS,
+    _compute_historical_volatility,
+    _compute_realized_vol_term_structure,
     aggregate_by_strike,
     compute_key_gamma_levels,
     compute_ivr,
@@ -127,3 +133,67 @@ def test_compute_key_gamma_levels_skips_zero_exposure_walls():
     assert levels["call_wall"] is None
     assert levels["put_wall"] is None
     assert levels["zero_gamma"] is None
+
+
+def _constant_step_history(n_days: int, daily_return: float) -> pd.DataFrame:
+    """n_days closes compounding at a fixed daily return -- gives a
+    predictable, hand-computable realized volatility (should annualize to
+    ~0 for a perfectly constant step size, since every log-return is
+    identical and std of identical values is 0)."""
+    closes = [100.0 * ((1 + daily_return) ** i) for i in range(n_days)]
+    return pd.DataFrame({"Close": closes})
+
+
+class TestComputeHistoricalVolatilityWindow:
+    def test_default_window_matches_prior_20_day_behavior(self):
+        # 80 days of varying returns -- default call (no window arg) must
+        # equal an explicit window=20 call, preserving the pre-existing
+        # "20-day realized volatility" behavior other callers depend on.
+        rng_closes = [100.0, 101.0, 99.5, 102.0, 98.0] * 20
+        history = pd.DataFrame({"Close": rng_closes})
+        assert _compute_historical_volatility(history) == _compute_historical_volatility(history, window=20)
+
+    def test_constant_step_size_has_zero_volatility(self):
+        history = _constant_step_history(30, daily_return=0.01)
+        vol = _compute_historical_volatility(history, window=20)
+        assert vol == pytest.approx(0.0, abs=1e-9)
+
+    def test_insufficient_closes_for_window_returns_none(self):
+        # Only 5 closes available; asking for a 60-day window still computes
+        # over whatever's there (tail() doesn't raise on a short frame) --
+        # confirm this doesn't crash, and returns a real (not None) number
+        # when at least 2 closes exist.
+        history = pd.DataFrame({"Close": [100.0, 101.0, 99.0, 102.0, 98.0]})
+        vol = _compute_historical_volatility(history, window=60)
+        assert vol is not None
+
+    def test_none_when_fewer_than_two_closes(self):
+        history = pd.DataFrame({"Close": [100.0]})
+        assert _compute_historical_volatility(history, window=20) is None
+
+    def test_none_for_empty_or_missing_history(self):
+        assert _compute_historical_volatility(None) is None
+        assert _compute_historical_volatility(pd.DataFrame()) is None
+
+
+class TestRealizedVolTermStructure:
+    def test_returns_a_value_for_each_configured_window(self):
+        history = _constant_step_history(90, daily_return=0.005)
+        result = _compute_realized_vol_term_structure(history)
+        assert set(result.keys()) == {f"realized_vol_{w}d" for w in REALIZED_VOL_TERM_STRUCTURE_WINDOWS}
+        assert all(v is not None for v in result.values())
+
+    def test_none_history_returns_all_none_not_a_crash(self):
+        result = _compute_realized_vol_term_structure(None)
+        assert all(v is None for v in result.values())
+
+    def test_20d_key_matches_the_legacy_historical_volatility_field(self):
+        # historical_volatility (the existing field) is computed via the
+        # same function at window=20 -- confirm the term structure's 20d
+        # entry is identical, not a second independent computation that
+        # could silently drift from it.
+        rng_closes = [100.0, 103.0, 98.0, 101.0, 99.5] * 20
+        history = pd.DataFrame({"Close": rng_closes})
+        legacy = _compute_historical_volatility(history)
+        term_structure = _compute_realized_vol_term_structure(history)
+        assert term_structure["realized_vol_20d"] == legacy

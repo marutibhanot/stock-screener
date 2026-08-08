@@ -88,13 +88,31 @@ class OptionsMetricsSnapshot(Base):
     expected_move = Column(Float, nullable=True)
     atm_strike = Column(Float, nullable=True)
 
-    # Flow / positioning (live_full only)
+    # Flow / positioning. volume_put_call_ratio/open_interest_put_call_ratio
+    # are live_full only; the rest are populated by both live_full and
+    # batch_abbreviated (analyze_options_exposure derives them from the
+    # same nearest-expiration chain it already fetches for GEX).
     volume_put_call_ratio = Column(Float, nullable=True)
     open_interest_put_call_ratio = Column(Float, nullable=True)
     total_call_oi = Column(Integer, nullable=True)
     total_put_oi = Column(Integer, nullable=True)
     call_premium_notional = Column(Float, nullable=True)
     put_premium_notional = Column(Float, nullable=True)
+    # spot * delta * volume * 100, summed across every contract on the
+    # nearest expiration -- delta is signed by option type, so calls and
+    # puts net against each other directly (positive = today's volume
+    # skews toward bullish/call-heavy delta exposure).
+    net_delta_dollar_flow = Column(Float, nullable=True)
+
+    # Term structure: a second constant-maturity IV reading from the *next*
+    # listed expiration (not literally "30D" -- whatever yfinance actually
+    # has next for this ticker, which varies). term_structure_ratio =
+    # current_atm_iv / next_expiration_atm_iv; > 1 means the nearer
+    # expiration is pricing more vol than the further one (backwardation --
+    # event risk priced into the near-term).
+    next_expiration = Column(Date, nullable=True)
+    next_expiration_atm_iv = Column(Float, nullable=True)
+    term_structure_ratio = Column(Float, nullable=True)
 
     # Max pain (live_full only -- also separately tracked in max_pain_snapshots)
     max_pain_strike = Column(Float, nullable=True)

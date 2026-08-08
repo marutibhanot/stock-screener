@@ -1,6 +1,23 @@
-import { Grid, Paper, Typography, Box, Chip } from '@mui/material';
+import { Grid, Paper, Typography, Box, Table, TableBody, TableRow, TableCell } from '@mui/material';
 
-function MetricCard({ title, value, subtitle, color, status, description }) {
+// Maps the MUI Chip-style color keyword each status object already carries
+// (success/error/warning/default) to the equivalent text color, so the
+// sentiment line renders as plain colored text + emoji dot -- matching the
+// Time Drift (DEX/VEX/CEX) cards' style -- instead of a pill-shaped Chip.
+const STATUS_TEXT_COLOR = {
+  success: 'success.main',
+  error: 'error.main',
+  warning: 'warning.main',
+  info: 'info.main',
+  default: 'text.secondary',
+};
+
+// Dashboard-wide convention: title says what the number is, the sentiment
+// line gives an emoji-coded bullish/bearish/neutral read at a glance, and
+// "What this means:" spells out the judgment in plain language -- status
+// (judgment) and description (plain definition, no judgment) are separate
+// slots so a card can use either or both.
+function MetricCard({ title, value, subtitle, color, status, description, notes }) {
   const isZero = value === 0 || value === '0';
   return (
     <Paper sx={{ p: 2, height: '100%', backgroundColor: isZero ? 'rgba(255,152,0,0.05)' : 'inherit' }}>
@@ -10,22 +27,72 @@ function MetricCard({ title, value, subtitle, color, status, description }) {
       </Typography>
       {status && (
         <Box sx={{ mt: 1 }}>
-          <Chip label={status.label} size="small" color={status.color} />
+          <Typography variant="body2" sx={{ fontWeight: 600, color: STATUS_TEXT_COLOR[status.color] || 'text.secondary' }}>
+            {status.emoji ? `${status.emoji} ` : ''}{status.label}
+          </Typography>
           {status.description && (
             <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
-              {status.description}
+              <strong>What this means:</strong> {status.description}
             </Typography>
           )}
         </Box>
       )}
       {subtitle && <Typography variant="caption" color="text.secondary">{subtitle}</Typography>}
-      {/* Plain-language explanation for cards with no good/bad judgment to
-          make (structural levels, exposure greeks) -- distinct from
-          status.description, which only renders alongside an evaluative
-          Chip (Low/High/Neutral etc). */}
+      {/* Plain-language definition for cards with no good/bad judgment to
+          make (structural levels) -- distinct from status.description,
+          which only renders alongside an evaluative Chip (Low/High/Neutral etc). */}
       {description && (
         <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
           {description}
+        </Typography>
+      )}
+      {notes && notes.length > 0 && (
+        <Box sx={{ mt: 1 }}>
+          <Typography variant="caption" sx={{ fontWeight: 600, display: 'block' }}>
+            How to read it
+          </Typography>
+          {notes.map((note) => (
+            <Typography key={note} variant="caption" sx={{ display: 'block', color: 'text.secondary' }}>
+              {note}
+            </Typography>
+          ))}
+        </Box>
+      )}
+      {isZero && <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'warning.main' }}>No data</Typography>}
+    </Paper>
+  );
+}
+
+// Dealer-exposure cards (DEX/VEX/CEX) follow a distinct "what it means" +
+// "Simple explanation:" layout instead of MetricCard's Chip-based status,
+// since their sign meaning is direction-neutral prose rather than a short
+// evaluative label -- forcing them through MetricCard would either drop the
+// two-paragraph explanation or bloat that shared component for 3 callers.
+function ExposureCard({ title, value, sign, whatItMeans, simpleExplanation }) {
+  const isZero = value === 0 || value === '0';
+  const signMeta =
+    sign > 0
+      ? { label: 'Positive', emoji: '🟢', color: 'success.main' }
+      : sign < 0
+        ? { label: 'Negative', emoji: '🔴', color: 'error.main' }
+        : { label: 'Neutral', emoji: '⚪', color: 'text.secondary' };
+  return (
+    <Paper sx={{ p: 2, height: '100%', backgroundColor: isZero ? 'rgba(255,152,0,0.05)' : 'inherit' }}>
+      <Typography variant="caption" color="text.secondary">{title}</Typography>
+      <Typography variant="h6">{value ?? '—'}</Typography>
+      {sign != null && (
+        <Typography variant="body2" sx={{ mt: 0.5, fontWeight: 600, color: signMeta.color }}>
+          {signMeta.emoji} {signMeta.label}
+        </Typography>
+      )}
+      {whatItMeans && (
+        <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'text.secondary' }}>
+          {whatItMeans}
+        </Typography>
+      )}
+      {simpleExplanation && (
+        <Typography variant="caption" sx={{ display: 'block', mt: 1, color: 'text.secondary' }}>
+          <strong>Simple explanation:</strong> {simpleExplanation}
         </Typography>
       )}
       {isZero && <Typography variant="caption" sx={{ display: 'block', mt: 0.5, color: 'warning.main' }}>No data</Typography>}
@@ -51,6 +118,8 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
     ivr,
     skew,
     historical_volatility,
+    realized_vol_10d,
+    realized_vol_60d,
     volatility_risk_premium,
     expected_move,
     call_premium_notional,
@@ -66,7 +135,28 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
   const isModelDerivedGreeks = greeks_methodology === 'black_scholes_derived';
 
   const historicalVolatilityPct = historical_volatility != null ? historical_volatility * 100 : null;
+  const realizedVol10dPct = realized_vol_10d != null ? realized_vol_10d * 100 : null;
+  const realizedVol60dPct = realized_vol_60d != null ? realized_vol_60d * 100 : null;
   const volatilityRiskPremiumPct = volatility_risk_premium != null ? volatility_risk_premium * 100 : null;
+
+  // Plain-language read of the realized-vol term structure (10d vs 20d vs
+  // 60d) -- lets a reader see whether the stock's actual movement is
+  // speeding up into a squeeze or settling down, independent of the
+  // separately-shown Implied Volatility Term Structure chart. A >20%
+  // relative gap is the threshold for calling it out; smaller gaps read as
+  // noise rather than a real regime shift.
+  const getRealizedVolTrendNote = () => {
+    if (realizedVol10dPct == null || historicalVolatilityPct == null) return null;
+    if (historicalVolatilityPct === 0) return null;
+    const shortVsMid = (realizedVol10dPct - historicalVolatilityPct) / historicalVolatilityPct;
+    if (shortVsMid > 0.2) {
+      return 'The stock has been moving noticeably more in the last 10 days than its recent average -- price action is speeding up.';
+    }
+    if (shortVsMid < -0.2) {
+      return 'The stock has been moving noticeably less in the last 10 days than its recent average -- price action is settling down.';
+    }
+    return 'Recent price movement has been fairly steady -- no clear speeding up or settling down.';
+  };
 
   const invalidSameStrikeLevels = Boolean(
     key_levels?.call_wall != null &&
@@ -99,118 +189,134 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
     if (metric === 'ivr') {
       if (num < 20) {
         return {
-          label: 'Low IVR',
-          color: 'warning',
-          description: 'Implied volatility is low; options are cheaper but may underprice future moves.',
+          label: 'Options Are Cheap',
+          emoji: '🟢',
+          color: 'success',
+          description: 'Option prices are currently low compared to the past year. This means buying options is relatively inexpensive because the market expects smaller price moves.',
         };
       }
       if (num > 80) {
         return {
-          label: 'High IVR',
+          label: 'Options Are Expensive',
+          emoji: '🟠',
           color: 'warning',
-          description: 'Implied volatility is elevated; premiums are rich and downside protection is expensive.',
+          description: 'Option prices are currently high compared to the past year. This means buying options is relatively expensive because the market expects larger price moves.',
         };
       }
       return {
-        label: 'Normal IVR',
-        color: 'success',
-        description: 'IVR is in a balanced range; option prices are neither overly cheap nor rich.',
+        label: 'Fairly Priced',
+        emoji: '⚪',
+        color: 'default',
+        description: 'Option prices are near their typical range compared to the past year -- neither especially cheap nor expensive right now.',
       };
     }
 
     if (metric === 'skew') {
       if (num > 0.01) {
         return {
-          label: 'Put Skew',
-          color: 'warning',
-          description: 'Put IV exceeds call IV, indicating demand for downside protection.',
+          label: 'Bearish',
+          emoji: '🔴',
+          color: 'error',
+          description: 'Traders are paying more for downside (put) protection than upside (call) exposure, suggesting some fear or caution in the options market.',
         };
       }
       if (num < -0.01) {
         return {
-          label: 'Call Skew',
+          label: 'Bullish',
+          emoji: '🟢',
           color: 'success',
-          description: 'Call IV exceeds put IV, suggesting bullish demand for upside exposure.',
+          description: 'Traders are paying more for upside (call) exposure than downside (put) protection, suggesting some optimism in the options market.',
         };
       }
       return {
-        label: 'Neutral Skew',
-        color: 'success',
-        description: 'Volatility skew is balanced across calls and puts.',
+        label: 'Neutral',
+        emoji: '⚪',
+        color: 'default',
+        description: 'Traders are paying about the same for bullish (call) and bearish (put) options, suggesting no strong fear or optimism in the options market.',
       };
     }
 
     if (metric === 'historical_volatility') {
       if (num < 15) {
         return {
-          label: 'Low HV',
+          label: 'Low',
+          emoji: '🟢',
           color: 'success',
-          description: 'Realized volatility is low; the stock has been relatively quiet recently.',
+          description: 'The stock has been fairly calm over the past 20 trading days. This looks at what already happened, not what is expected to happen next.',
         };
       }
       if (num > 35) {
         return {
-          label: 'High HV',
+          label: 'High',
+          emoji: '🟠',
           color: 'warning',
-          description: 'Realized volatility is elevated; recent returns have been large relative to history.',
+          description: 'The stock has been making large price moves over the past 20 trading days. This looks at what already happened, not what is expected to happen next.',
         };
       }
       return {
-        label: 'Moderate HV',
-        color: 'info',
-        description: 'Realized volatility is within a normal market range.',
+        label: 'Moderate',
+        emoji: '⚪',
+        color: 'default',
+        description: "The stock's recent price swings have been fairly typical over the past 20 trading days. This looks at what already happened, not what is expected to happen next.",
       };
     }
 
     if (metric === 'volatility_risk_premium') {
       if (num > 2) {
         return {
-          label: 'Rich VRP',
+          label: 'Options Look Expensive',
+          emoji: '🟠',
           color: 'warning',
-          description: 'Implied volatility is meaningfully richer than realized volatility, making options more expensive.',
+          description: "Options are more expensive than the stock's recent movements would suggest. This may make selling premium more attractive than buying it.",
         };
       }
       if (num < -2) {
         return {
-          label: 'Cheap VRP',
+          label: 'Options Look Cheap',
+          emoji: '🟢',
           color: 'success',
-          description: 'Implied volatility is lower than realized volatility, making options relatively inexpensive.',
+          description: "Options are less expensive than the stock's recent movements would suggest. This may provide better value for traders looking to buy options.",
         };
       }
       return {
-        label: 'Neutral VRP',
-        color: 'info',
-        description: 'IV and realized volatility are aligned, indicating balanced option pricing.',
+        label: 'Fairly Priced',
+        emoji: '⚪',
+        color: 'default',
+        description: "Option prices roughly match how much the stock has actually been moving -- neither buying nor selling options has an obvious edge from this alone.",
       };
     }
 
     if (metric === 'expected_move') {
       return {
-        label: 'Guidance',
-        color: 'info',
-        description: 'Expected move is the at-the-money call + put premium, representing one standard move estimate for the expiry.',
+        label: 'Market Estimate',
+        emoji: '📊',
+        color: 'default',
+        description: `Based on today's option prices, the market expects the stock to move about $${num.toFixed(2)} up or down by expiration. This is not a prediction -- just the range that options are currently pricing in.`,
       };
     }
 
     if (metric === 'premium_pcr') {
       if (num > 1.5) {
         return {
-          label: 'Put-Biased',
-          color: 'warning',
-          description: 'Put premium dominates call premium, signaling protective demand or bearish positioning.',
+          label: 'Bearish (Put-Biased)',
+          emoji: '🔴',
+          color: 'error',
+          description: 'Today, much more money is flowing into put options than call options. This suggests traders are currently betting on lower prices or hedging downside risk.',
         };
       }
       if (num < 0.7) {
         return {
-          label: 'Call-Biased',
+          label: 'Bullish (Call-Biased)',
+          emoji: '🟢',
           color: 'success',
-          description: 'Call premium dominates, suggesting bullish option demand.',
+          description: 'Today, much more money is flowing into call options than put options. This suggests traders are currently betting on higher prices.',
         };
       }
       return {
-        label: 'Neutral Premium',
-        color: 'info',
-        description: 'Call and put premiums are roughly balanced.',
+        label: 'Neutral',
+        emoji: '⚪',
+        color: 'default',
+        description: 'Money is flowing fairly evenly between call and put options today, showing no strong directional bet.',
       };
     }
 
@@ -219,20 +325,20 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
         return {
           label: 'Long Gamma',
           color: 'success',
-          description: 'Positive gamma exposure; option sellers may hedge into moves and reduce volatility.',
+          description: 'Dealers are helping keep the price more stable -- large swings are less likely (positive GEX).',
         };
       }
       if (num < 0) {
         return {
           label: 'Short Gamma',
           color: 'warning',
-          description: 'Negative gamma exposure; market makers may amplify moves when hedging.',
+          description: 'Dealers may have to buy and sell shares quickly, which can make price swings bigger (negative GEX).',
         };
       }
       return {
         label: 'Neutral Gamma',
         color: 'info',
-        description: 'Gamma exposure is balanced and not likely to drive strong hedging flows.',
+        description: "Dealer positioning is balanced and isn't adding much to price swings either way (neutral GEX).",
       };
     }
 
@@ -250,21 +356,24 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
       if (spot >= wallStrike) {
         return {
           label: 'Above Call Wall',
+          emoji: '🟠',
           color: 'warning',
-          description: 'Price has pushed above the call wall -- this resistance level may no longer be holding, or a larger move is underway.',
+          description: 'The stock has already broken above this resistance level.',
         };
       }
       if (pctFromWall > -2) {
         return {
           label: 'Near Call Wall',
+          emoji: '🟠',
           color: 'warning',
-          description: 'Price is close to the call wall; upward moves may face resistance here as dealers hedge.',
+          description: 'The stock is approaching a level where it may face resistance.',
         };
       }
       return {
         label: 'Below Call Wall',
-        color: 'info',
-        description: 'Price has room to run before reaching the call wall.',
+        emoji: '⚪',
+        color: 'default',
+        description: 'The stock has room to rise before hitting this resistance level.',
       };
     }
 
@@ -272,33 +381,58 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
     if (spot <= wallStrike) {
       return {
         label: 'Below Put Wall',
+        emoji: '🟠',
         color: 'warning',
-        description: 'Price has fallen below the put wall -- this support level may no longer be holding.',
+        description: 'The stock has already broken below this support level.',
       };
     }
     if (pctFromWall < 2) {
       return {
         label: 'Near Put Wall',
+        emoji: '🟠',
         color: 'warning',
-        description: 'Price is close to the put wall; downward moves may find support here as dealers hedge.',
+        description: 'The stock is approaching a level where buyers may step in.',
       };
     }
     return {
       label: 'Above Put Wall',
+      emoji: '🟢',
       color: 'success',
-      description: 'Price has room before reaching the put wall.',
+      description: 'The stock has room to fall before reaching this support level.',
     };
   };
 
-  // Sign-only badge for DEX/VEX/CEX -- deliberately neutral color (these
-  // aren't inherently bullish/bearish signals the way gamma regime is), just
-  // labels which direction the current reading points.
-  const getExposureSignStatus = (label) => (value) => {
+  // Sign of DEX/VEX/CEX -- null when the metric is missing, so ExposureCard
+  // knows to hide the Positive/Negative/Neutral badge entirely rather than
+  // show a misleading "Neutral" for absent data.
+  const getExposureSign = (value) => {
     if (value == null || Number.isNaN(Number(value))) return null;
     const num = Number(value);
-    if (num > 0) return { label: `Positive ${label}`, color: 'info' };
-    if (num < 0) return { label: `Negative ${label}`, color: 'info' };
-    return { label: `Neutral ${label}`, color: 'info' };
+    return num > 0 ? 1 : num < 0 ? -1 : 0;
+  };
+
+  // "Simple explanation:" copy per exposure card, branched on sign -- these
+  // aren't bullish/bearish calls (DEX/VEX/CEX stay out of the Executive
+  // Summary's vote), just plain-language framing of what that sign implies
+  // for dealer hedging flow.
+  const getExposureExplanation = (kind, sign) => {
+    if (sign == null) return null;
+    if (kind === 'dex') {
+      if (sign > 0) return 'A positive value usually helps keep price moves smoother because dealers tend to buy when prices rise and sell when prices fall.';
+      if (sign < 0) return 'A negative value means dealers may need to sell as prices rise and buy as prices fall, which can add to price swings instead of smoothing them.';
+      return "Dealer positioning is balanced right now, so it isn't adding meaningful buying or selling pressure either way.";
+    }
+    if (kind === 'vex') {
+      if (sign > 0) return 'A positive value means a change in volatility could cause dealers to trade in a way that helps reduce market swings.';
+      if (sign < 0) return 'A negative value means a change in volatility could cause dealers to trade in a way that adds to market swings instead of reducing them.';
+      return "Dealer hedging currently isn't very sensitive to changes in volatility.";
+    }
+    if (kind === 'cex') {
+      if (sign > 0) return 'A positive value means dealers may gradually adjust their positions in a way that tends to add stability as options get closer to expiration.';
+      if (sign < 0) return 'A negative value means dealers may gradually need to adjust their positions, which can create extra buying or selling pressure as options get closer to expiration.';
+      return "Time decay currently isn't creating meaningful buying or selling pressure from dealers.";
+    }
+    return null;
   };
 
   return (
@@ -310,7 +444,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
         <MetricCard
           title="Call Wall"
           value={safeKeyLevel(key_levels?.call_wall)}
-          description="Strike with the heaviest call-side gamma. Price often struggles to push above this level, since dealers hedge in a way that leans against the move -- it tends to act like a ceiling."
+          description="This is a price level where the stock often struggles to move above. Think of it as a ceiling."
           status={getWallStatus(underlying_price, key_levels?.call_wall, 'call')}
         />
       </Grid>
@@ -318,7 +452,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
         <MetricCard
           title="Put Wall"
           value={safeKeyLevel(key_levels?.put_wall)}
-          description="Strike with the heaviest put-side gamma. Price often finds support here as dealers hedge -- tends to act like a floor."
+          description="This is a price level where buyers often step in. Think of it as a floor."
           status={getWallStatus(underlying_price, key_levels?.put_wall, 'put')}
         />
       </Grid>
@@ -328,41 +462,42 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
       {sections.includes('greeks') && (
         <>
           <Grid item xs={12} sm={6} md={4} lg={3}>
-            <MetricCard
-              title="Net DEX"
+            <ExposureCard
+              title="Dealer Buying & Selling (DEX)"
               value={net?.net_dex !== undefined ? formatNumber(net.net_dex) : '—'}
-              subtitle="Delta Exposure"
-              color={net?.net_dex > 0 ? 'success.main' : net?.net_dex < 0 ? 'error.main' : undefined}
-              description="Roughly how many dollars of stock dealers may need to trade for every $1 the price moves, to stay hedged. Positive: dealers may sell into rallies (dampens moves). Negative: dealers may buy into rallies (can fuel moves)."
-              status={getExposureSignStatus('DEX')(net?.net_dex)}
+              sign={getExposureSign(net?.net_dex)}
+              whatItMeans="Shows how much buying or selling dealers may need to do as the stock price changes."
+              simpleExplanation={getExposureExplanation('dex', getExposureSign(net?.net_dex))}
             />
           </Grid>
           <Grid item xs={12} sm={6} md={4} lg={3}>
-            <MetricCard
-              title="Net VEX"
+            <ExposureCard
+              title="🌪️ Volatility Impact (VEX)"
               value={net?.net_vex !== undefined ? formatNumber(net.net_vex) : '—'}
-              subtitle={isModelDerivedGreeks ? 'Vanna Exposure (model estimate)' : 'Vanna Exposure'}
-              color={net?.net_vex > 0 ? 'success.main' : net?.net_vex < 0 ? 'error.main' : undefined}
-              description="How much dealer hedging would shift if implied volatility itself changes, separate from any price move. Matters most when volatility is swinging sharply."
-              status={getExposureSignStatus('VEX')(net?.net_vex)}
+              sign={getExposureSign(net?.net_vex)}
+              whatItMeans="Shows how dealer activity could change if the market suddenly becomes more or less volatile."
+              simpleExplanation={getExposureExplanation('vex', getExposureSign(net?.net_vex))}
             />
           </Grid>
           <Grid item xs={12} sm={6} md={4} lg={3}>
-            <MetricCard
-              title="Net CEX"
+            <ExposureCard
+              title="⏳ Time Decay Impact (CEX)"
               value={net?.net_cex !== undefined ? formatNumber(net.net_cex) : '—'}
-              subtitle={isModelDerivedGreeks ? 'Charm Exposure (model estimate)' : 'Charm Exposure'}
-              color={net?.net_cex > 0 ? 'success.main' : net?.net_cex < 0 ? 'error.main' : undefined}
-              description="How much dealer hedging drifts purely from time passing (fewer days left to expiration), even if price doesn't move. Tends to matter more as expiration gets close."
-              status={getExposureSignStatus('CEX')(net?.net_cex)}
+              sign={getExposureSign(net?.net_cex)}
+              whatItMeans="Shows how dealer positions naturally change as time passes, even if the stock price stays the same."
+              simpleExplanation={getExposureExplanation('cex', getExposureSign(net?.net_cex))}
             />
           </Grid>
         </>
       )}
       {sections.includes('greeks') && isModelDerivedGreeks && (
         <Grid item xs={12}>
+          <Typography variant="body2" sx={{ fontWeight: 600 }}>
+            📖 Note
+          </Typography>
           <Typography variant="caption" color="text.secondary">
-            VEX/CEX are Black-Scholes estimates (strike + IV + time-to-expiry) — Yahoo's options data doesn't report vanna/charm directly.
+            VEX (Vanna Exposure) and CEX (Charm Exposure) are estimates based on the Black-Scholes options model.
+            Yahoo Finance does not provide these values directly, so they are calculated from the available option data.
           </Typography>
         </Grid>
       )}
@@ -372,7 +507,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
       <>
       <Grid item xs={12} sm={6} md={4} lg={3}>
         <MetricCard
-          title="IV Rank (IVR)"
+          title="💲 Option Prices (IV Rank)"
           value={ivr != null ? `${ivr.toFixed(1)}%` : '—'}
           subtitle="52W IV Percentile"
           status={getMetricStatus('ivr', ivr)}
@@ -383,7 +518,7 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
       </Grid>
       <Grid item xs={12} sm={6} md={4} lg={3}>
         <MetricCard
-          title="25Δ Volatility Skew"
+          title="⚖️ Bullish vs Bearish Demand (25Δ Volatility Skew)"
           value={skew != null ? skew.toFixed(4) : '—'}
           subtitle="Put IV - Call IV"
           status={getMetricStatus('skew', skew)}
@@ -391,43 +526,72 @@ export default function SummaryCards({ data, sections = ALL_SECTIONS }) {
       </Grid>
       <Grid item xs={12} sm={6} md={4} lg={3}>
         <MetricCard
-          title="Historical Volatility"
+          title="📈 Recent Stock Movement (Historical Volatility)"
           value={historicalVolatilityPct != null ? `${historicalVolatilityPct.toFixed(1)}%` : '—'}
           subtitle="20-day realized volatility"
           status={getMetricStatus('historical_volatility', historicalVolatilityPct)}
-          description="How much the stock has actually moved over the past 20 trading days, annualized. This looks backward at what happened -- it isn't a forecast."
+          notes={
+            realizedVol10dPct != null || realizedVol60dPct != null
+              ? [
+                  `Last 10 days: ${realizedVol10dPct != null ? `${realizedVol10dPct.toFixed(1)}%` : '—'}`,
+                  `Last 60 days: ${realizedVol60dPct != null ? `${realizedVol60dPct.toFixed(1)}%` : '—'}`,
+                  getRealizedVolTrendNote(),
+                ].filter(Boolean)
+              : undefined
+          }
         />
       </Grid>
       <Grid item xs={12} sm={6} md={4} lg={3}>
         <MetricCard
-          title="Volatility Risk Premium"
+          title="💰 Option Value (Volatility Risk Premium)"
           value={volatilityRiskPremiumPct != null ? `${volatilityRiskPremiumPct.toFixed(1)}%` : '—'}
           subtitle="ATM IV - HV"
           status={getMetricStatus('volatility_risk_premium', volatilityRiskPremiumPct)}
-          description="The gap between what options are pricing in for future moves (implied) and what the stock actually did recently (realized/historical). Positive means options are pricing in more movement than has actually been happening."
         />
       </Grid>
       <Grid item xs={12} sm={6} md={4} lg={3}>
         <MetricCard
-          title="Expected Move"
-          value={expected_move != null ? `$${expected_move.toFixed(2)}` : '—'}
+          title="🎯 Expected Move"
+          value={expected_move != null ? `±$${expected_move.toFixed(2)}` : '—'}
           subtitle="ATM call + put premium"
           status={getMetricStatus('expected_move', expected_move)}
-          description="A rough one-standard-deviation price range for this expiration, priced in by at-the-money options. Roughly a 2-in-3 chance the stock stays within +/- this amount by expiry."
         />
+      </Grid>
+      <Grid item xs={12}>
+        <Paper variant="outlined" sx={{ p: 2 }}>
+          <Typography variant="subtitle2" sx={{ fontWeight: 600, mb: 1 }}>
+            📖 Simple Guide
+          </Typography>
+          <Table size="small">
+            <TableBody>
+              {[
+                ['Option Prices (IV Rank)', 'Are options cheap or expensive?'],
+                ['Bullish vs Bearish Demand (25Δ Volatility Skew)', 'Are traders leaning bullish or bearish?'],
+                ['Recent Stock Movement (Historical Volatility)', 'How much has the stock actually been moving lately?'],
+                ['Option Value (Volatility Risk Premium)', 'Are options priced fairly compared to recent stock movement?'],
+                ['Expected Move', 'How much does the market expect the stock to move before expiration?'],
+              ].map(([indicator, meaning]) => (
+                <TableRow key={indicator}>
+                  <TableCell sx={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{indicator}</TableCell>
+                  <TableCell sx={{ color: 'text.secondary' }}>{meaning}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Paper>
       </Grid>
       </>
       )}
       {sections.includes('flow') && (
       <Grid item xs={12} sm={6} md={4} lg={3}>
         <MetricCard
-          title="Premium Put/Call Ratio"
+          title="💰 Money Flow (Premium Put/Call Ratio)"
           value={call_premium_notional != null && put_premium_notional != null
             ? (put_premium_notional / (call_premium_notional || 1)).toFixed(2)
             : '—'}
           subtitle="Volume-weighted premium ratio"
           status={getMetricStatus('premium_pcr', call_premium_notional != null && put_premium_notional != null ? (put_premium_notional / (call_premium_notional || 1)) : null)}
-          description="Compares dollars traded in put premium vs call premium today (weighted by volume, not just contract count). Above 1: more money flowing into puts. Below 1: more into calls."
+          notes={['Above 1.0 = More money into puts (bearish)', 'Below 1.0 = More money into calls (bullish)']}
         />
       </Grid>
       )}
