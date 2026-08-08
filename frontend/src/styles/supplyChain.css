@@ -21,9 +21,15 @@
   --color-splc-orange: #ff5500;
   --color-splc-text: #e1e4ea;
   --color-splc-muted: #6c727f;
+  /* Exposure-tier scale (see mockSupplyChainData.js's EXPOSURE_TIERS):
+     High (>15%) / Medium (5-15%) / Low (<5%) -- exact hex from the
+     dashboard's backend-integration spec's "Dynamic Line Colors" section.
+     Medium reuses the same amber as the brand accent; Low reuses the same
+     muted gray as secondary labels, by design (single source of truth
+     rather than near-duplicate tokens). */
   --color-splc-high: #00c853;
-  --color-splc-medium: #ffb300;
-  --color-splc-low: #8a93a3;
+  --color-splc-medium: #ff9900;
+  --color-splc-low: #6c727f;
   --color-splc-risk-high: #ff3d57;
   --color-splc-risk-medium: #ffb300;
   --color-splc-risk-low: #00c853;

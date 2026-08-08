@@ -1,11 +1,14 @@
 import { exposureTierFor } from '../../data/mockSupplyChainData';
 import { nodeRadiusFor } from './graphLayout';
 
+// Mirrors styles/supplyChain.css's --color-splc-high/-medium/-low tokens --
+// duplicated as plain hex here since SVG fill/stroke attributes can't
+// reference CSS custom properties the way Tailwind classes can.
 const TIER_FILL = {
   high: '#00c853',
-  medium: '#ffb300',
-  low: '#3a4150',
-  unknown: '#3a4150',
+  medium: '#ff9900',
+  low: '#6c727f',
+  unknown: '#6c727f',
 };
 
 const CATEGORY_STROKE = {

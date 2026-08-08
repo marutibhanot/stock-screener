@@ -1,19 +1,29 @@
+import { exposureTierFor } from '../../data/mockSupplyChainData';
 import { edgeWidthFor } from './graphLayout';
 
-const CATEGORY_COLOR = {
-  suppliers: '#ff9900',
-  customers: '#38bdf8',
+// Dynamic Line Colors per the dashboard's backend-integration spec: Green
+// (>15%), Amber (5-15%), Gray (<5%) -- mirrors GraphNode's TIER_FILL /
+// styles/supplyChain.css's --color-splc-high/-medium/-low tokens.
+const TIER_COLOR = {
+  high: '#00c853',
+  medium: '#ff9900',
+  low: '#6c727f',
 };
 
 /** Directed edge between a supplier/customer and the target node. Suppliers
  * point INTO the target (arrow at target end); customers point OUT of the
  * target (arrow at customer end) -- per the "Directed arrows point FROM
  * Supplier TO Target" / "FROM Target TO Customer" spec. Competitors render
- * with no edge (they're peers, not a flow relationship). A gentle quadratic
- * curve (rather than a straight spoke) keeps the map legible when many
+ * with no edge (they're peers, not a flow relationship). Line color reflects
+ * exposure tier (not supplier/customer category) -- direction and node
+ * position already distinguish supplier vs. customer, so color is free to
+ * carry the exposure-magnitude signal instead. A gentle quadratic curve
+ * (rather than a straight spoke) keeps the map legible when many
  * suppliers/customers converge on the same center point. */
 export default function GraphEdge({ entry, from, to, direction, isHighlighted, onHoverStart, onHoverEnd }) {
-  const color = CATEGORY_COLOR[entry.category];
+  const exposure = entry.revenueExposurePct ?? entry.cogsExposurePct ?? 0;
+  const tier = exposureTierFor(exposure);
+  const color = TIER_COLOR[tier];
   const width = edgeWidthFor(entry);
 
   // direction: 'in' = supplier -> target (arrow at `to`), 'out' = target -> customer (arrow at `to`)
@@ -32,7 +42,7 @@ export default function GraphEdge({ entry, from, to, direction, isHighlighted, o
   const ctrlY = midY + (dx / len) * bow;
 
   const path = `M ${x1} ${y1} Q ${ctrlX} ${ctrlY} ${x2} ${y2}`;
-  const markerId = direction === 'in' ? 'splc-arrow-supplier' : 'splc-arrow-customer';
+  const markerId = `splc-arrow-${tier}`;
 
   return (
     <path

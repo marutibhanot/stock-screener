@@ -61,6 +61,7 @@ _include(
     tags=["options-command-center"],
     protected=False,
 )
+_include("splc", prefix="/splc", tags=["splc"])
 
 if settings.feature_themes:
     _include("themes", prefix="/themes", tags=["themes"])

@@ -24,18 +24,20 @@
  * ---------------------------------------------------------------------------
  */
 
-// Exposure-tier thresholds drive both node color and matrix-table badge color.
-// Kept here (not hardcoded per-record) so the whole dashboard's tiering can be
-// retuned in one place.
+// Exposure-tier thresholds drive node fill, edge/line color, and
+// matrix-table badge color. Kept here (not hardcoded per-record) so the
+// whole dashboard's tiering can be retuned in one place. Matches the
+// dashboard's backend-integration spec: High Exposure >15%, Medium 5%-15%,
+// Low <5%.
 export const EXPOSURE_TIERS = {
-  HIGH: 20, // >= 20% exposure
-  MEDIUM: 8, // >= 8% and < 20%
+  HIGH: 15, // > 15% exposure
+  MEDIUM: 5, // >= 5% and <= 15%
   // anything below MEDIUM is LOW
 };
 
 export function exposureTierFor(pct) {
   if (pct == null) return 'unknown';
-  if (pct >= EXPOSURE_TIERS.HIGH) return 'high';
+  if (pct > EXPOSURE_TIERS.HIGH) return 'high';
   if (pct >= EXPOSURE_TIERS.MEDIUM) return 'medium';
   return 'low';
 }

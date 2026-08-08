@@ -207,11 +207,16 @@ export default function SupplyChainGraph() {
             <stop offset="0%" stopColor="#ffc266" />
             <stop offset="100%" stopColor="#ff9900" />
           </radialGradient>
-          <marker id="splc-arrow-supplier" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          {/* One arrowhead per exposure tier -- GraphEdge picks the marker
+              matching its own tier color (see TIER_COLOR there). */}
+          <marker id="splc-arrow-high" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#00c853" />
+          </marker>
+          <marker id="splc-arrow-medium" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
             <path d="M0,0 L10,5 L0,10 z" fill="#ff9900" />
           </marker>
-          <marker id="splc-arrow-customer" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-            <path d="M0,0 L10,5 L0,10 z" fill="#38bdf8" />
+          <marker id="splc-arrow-low" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#6c727f" />
           </marker>
         </defs>
         <g transform={`translate(${transform.x},${transform.y}) scale(${transform.scale})`}>

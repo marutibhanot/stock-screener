@@ -29,6 +29,7 @@ export function SupplyChainProvider({ children, initialTicker = 'AAPL' }) {
     isLoading,
     isError,
     error,
+    refetch,
   } = useQuery({
     queryKey: ['supplyChainMap', selectedTicker],
     queryFn: () => getSupplyChainMap(selectedTicker),
@@ -90,6 +91,7 @@ export function SupplyChainProvider({ children, initialTicker = 'AAPL' }) {
       isLoading,
       isError,
       error,
+      refetch,
       selectedNodeId,
       setSelectedNodeId,
       selectedNode,
@@ -109,6 +111,7 @@ export function SupplyChainProvider({ children, initialTicker = 'AAPL' }) {
       isLoading,
       isError,
       error,
+      refetch,
       selectedNodeId,
       selectedNode,
       exposureThreshold,
