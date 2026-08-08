@@ -1161,11 +1161,16 @@ export default function OptionsAnalyticsDashboardPage() {
           {/* GEX Summary */}
           {gexRow && (
             <Box sx={{ mb: 3 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-                <Typography variant="h6">
-                  What does this tell us? {selectedExpiration ? `(Live: ${selectedExpiration})` : ''}
-                </Typography>
-                <LastUpdated timestamp={gexRow.fetched_at} />
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1, flexWrap: 'wrap', gap: 1 }}>
+                <Typography variant="h6">What does this tell us?</Typography>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'baseline' }}>
+                  {gexRow.expiration && (
+                    <Typography variant="caption" color="text.secondary">
+                      Expiration: <strong>{gexRow.expiration}</strong>
+                    </Typography>
+                  )}
+                  <LastUpdated timestamp={gexRow.fetched_at} />
+                </Box>
               </Box>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                 GEX shows how option dealers (big banks/market makers) are likely to react when the stock price
@@ -1258,11 +1263,16 @@ export default function OptionsAnalyticsDashboardPage() {
           {/* Structural Levels - Call Wall, Put Wall, Flip Level */}
           {displayAnalysisData && (
             <Box sx={{ mb: 3 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6">
-                  📍 Important Price Levels {selectedExpiration ? `(Live: ${selectedExpiration})` : '(Live: nearest expiration)'}
-                </Typography>
-                <LastUpdated timestamp={displayAnalysisData.timestamp} />
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
+                <Typography variant="h6">📍 Important Price Levels</Typography>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'baseline' }}>
+                  {displayOptionsMetrics?.expiration && (
+                    <Typography variant="caption" color="text.secondary">
+                      Expiration: <strong>{displayOptionsMetrics.expiration}</strong>
+                    </Typography>
+                  )}
+                  <LastUpdated timestamp={displayAnalysisData.timestamp} />
+                </Box>
               </Box>
               {(() => {
                 const callWallStrike = displayAnalysisData.call_wall?.strike;
@@ -1514,7 +1524,14 @@ export default function OptionsAnalyticsDashboardPage() {
               every other section below, so it's fetched once here. */}
           {displayOptionsMetrics && (
             <>
-              <LastUpdated timestamp={displayOptionsMetrics.computed_at} sx={{ display: 'block', mb: 1 }} />
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'baseline', mb: 1 }}>
+                {displayOptionsMetrics.expiration && (
+                  <Typography variant="caption" color="text.secondary">
+                    Expiration: <strong>{displayOptionsMetrics.expiration}</strong>
+                  </Typography>
+                )}
+                <LastUpdated timestamp={displayOptionsMetrics.computed_at} />
+              </Box>
               <SummaryCards data={displayOptionsMetrics} sections={['walls']} />
               <StrikeExposureChart
                 strikes={displayOptionsMetrics.strikes}
@@ -1535,7 +1552,14 @@ export default function OptionsAnalyticsDashboardPage() {
 
           {displayOptionsMetrics && (
             <>
-              <LastUpdated timestamp={displayOptionsMetrics.computed_at} sx={{ display: 'block', mb: 1 }} />
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'baseline', mb: 1 }}>
+                {displayOptionsMetrics.expiration && (
+                  <Typography variant="caption" color="text.secondary">
+                    Expiration: <strong>{displayOptionsMetrics.expiration}</strong>
+                  </Typography>
+                )}
+                <LastUpdated timestamp={displayOptionsMetrics.computed_at} />
+              </Box>
               <SummaryCards data={displayOptionsMetrics} sections={['volatility']} />
               <IVSmileChart
                 ivSmile={displayOptionsMetrics.iv_smile}
@@ -1562,11 +1586,16 @@ export default function OptionsAnalyticsDashboardPage() {
           {/* Max Pain Summary */}
           {maxPainRow && (
             <Box sx={{ mb: 3 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6">
-                  Max Pain Analysis {selectedExpiration ? `(Live: ${selectedExpiration})` : ''}
-                </Typography>
-                <LastUpdated timestamp={maxPainRow.fetched_at} />
+              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2, flexWrap: 'wrap', gap: 1 }}>
+                <Typography variant="h6">Max Pain Analysis</Typography>
+                <Box sx={{ display: 'flex', gap: 2, alignItems: 'baseline' }}>
+                  {maxPainRow.expiration && (
+                    <Typography variant="caption" color="text.secondary">
+                      Expiration: <strong>{maxPainRow.expiration}</strong>
+                    </Typography>
+                  )}
+                  <LastUpdated timestamp={maxPainRow.fetched_at} />
+                </Box>
               </Box>
               <Grid container spacing={2}>
                 <Grid item xs={12} sm={6} md={3}>
@@ -1641,7 +1670,14 @@ export default function OptionsAnalyticsDashboardPage() {
 
           {displayOptionsMetrics && (
             <>
-              <LastUpdated timestamp={displayOptionsMetrics.computed_at} sx={{ display: 'block', mb: 1 }} />
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'baseline', mb: 1 }}>
+                {displayOptionsMetrics.expiration && (
+                  <Typography variant="caption" color="text.secondary">
+                    Expiration: <strong>{displayOptionsMetrics.expiration}</strong>
+                  </Typography>
+                )}
+                <LastUpdated timestamp={displayOptionsMetrics.computed_at} />
+              </Box>
               <SummaryCards data={displayOptionsMetrics} sections={['flow']} />
               <Box sx={{ mb: 2 }}>
                 <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
@@ -1656,7 +1692,12 @@ export default function OptionsAnalyticsDashboardPage() {
                   signal to investigate further, not as a buy or sell signal.
                 </Typography>
               </Box>
-              <UnusualVolumeTable contracts={displayOptionsMetrics.unusual_volume} />
+              <UnusualVolumeTable
+                contracts={displayOptionsMetrics.unusual_volume}
+                expiration={displayOptionsMetrics.expiration}
+                asOf={displayOptionsMetrics.computed_at}
+                spotPrice={displayOptionsMetrics.underlying_price}
+              />
             </>
           )}
 
@@ -1668,7 +1709,14 @@ export default function OptionsAnalyticsDashboardPage() {
 
           {displayOptionsMetrics && (
             <>
-              <LastUpdated timestamp={displayOptionsMetrics.computed_at} sx={{ display: 'block', mb: 1 }} />
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'baseline', mb: 1 }}>
+                {displayOptionsMetrics.expiration && (
+                  <Typography variant="caption" color="text.secondary">
+                    Expiration: <strong>{displayOptionsMetrics.expiration}</strong>
+                  </Typography>
+                )}
+                <LastUpdated timestamp={displayOptionsMetrics.computed_at} />
+              </Box>
               <SummaryCards data={displayOptionsMetrics} sections={['greeks']} />
             </>
           )}
@@ -1736,6 +1784,14 @@ export default function OptionsAnalyticsDashboardPage() {
           />
           {displayOptionsMetrics && (
             <Paper sx={{ p: 2, mt: 1 }}>
+              <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'baseline', mb: 2 }}>
+                {displayOptionsMetrics.expiration && (
+                  <Typography variant="caption" color="text.secondary">
+                    Expiration: <strong>{displayOptionsMetrics.expiration}</strong>
+                  </Typography>
+                )}
+                <LastUpdated timestamp={displayOptionsMetrics.computed_at} />
+              </Box>
               <Grid container spacing={4}>
                 <Grid item xs={12} md={6}>
                   <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
@@ -1808,6 +1864,10 @@ export default function OptionsAnalyticsDashboardPage() {
           />
           {horizonData && horizonData.status === 'ok' ? (
             <Paper sx={{ p: 2, mt: 1 }}>
+              <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 2 }}>
+                As of {horizonData.as_of_date} -- not tied to the expiration picked above (this panel compares
+                across every stock&apos;s own history, which has no expiration dimension).
+              </Typography>
               <Grid container spacing={4}>
                 {[5, 21].map((days) => {
                   const stats = horizonData.horizons?.[String(days)];
@@ -2069,7 +2129,14 @@ export default function OptionsAnalyticsDashboardPage() {
                     section timestamp scrolls out of view, leaving the reader
                     with no visible answer to "how current is this?" right where
                     the conclusion (and its Buy/Sell/Bearish label) is read. */}
-                <LastUpdated timestamp={displayOptionsMetrics.computed_at} sx={{ display: 'block', mt: 1 }} />
+                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'baseline', mt: 1 }}>
+                  {displayOptionsMetrics.expiration && (
+                    <Typography variant="caption" color="text.secondary">
+                      Expiration: <strong>{displayOptionsMetrics.expiration}</strong>
+                    </Typography>
+                  )}
+                  <LastUpdated timestamp={displayOptionsMetrics.computed_at} />
+                </Box>
               </Paper>
             </>
           )}
