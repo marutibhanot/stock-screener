@@ -81,7 +81,16 @@ x-worker-common: &worker-common
 services:
   redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes
+    # maxmemory was previously unset (0 = unbounded) -- on a 15GB host shared
+    # with Postgres/backend/Celery, an uncapped cache is a real OOM risk if a
+    # key is ever written without a TTL. allkeys-lru is safe here because
+    # every cached entry has a DB fallback on miss (see redis_pool.py) --
+    # eviction just means a slower re-fetch, never data loss. Capped at
+    # 700mb, deliberately below docker-compose.prod.yml's REDIS_MEM_LIMIT
+    # (1G) hard cgroup limit -- leaves headroom for Redis's own overhead and
+    # AOF rewrite buffer spikes (appendonly=yes) rather than racing the
+    # cgroup's OOM killer at the ceiling.
+    command: redis-server --appendonly yes --maxmemory 700mb --maxmemory-policy allkeys-lru
     volumes:
       - redis_data:/data
     healthcheck:
@@ -98,6 +107,40 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-stockscanner}
       POSTGRES_USER: ${POSTGRES_USER:-stockscanner}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-stockscanner}
+    # Previously ran on compiled-in defaults (shared_buffers=128MB,
+    # work_mem=4MB) sized for a toy install, not this host. Tuned against
+    # this deployment's real numbers: 15GB host RAM, and a hot working set
+    # (feature_percentiles + stock_prices, the tables the dashboard actually
+    # queries live) of ~6-8GB -- external_option_chain_history is 20GB but
+    # is options-signal-model's offline research archive, not part of the
+    # live query path, so it's deliberately not what cache sizing targets.
+    # max_connections lowered from 100 to reflect this app's real
+    # concurrency (a handful of backend + Celery workers, not 100 clients),
+    # which also bounds worst-case work_mem usage under concurrent load.
+    # shared_buffers/effective_cache_size/maintenance_work_mem are sized to
+    # fit WITHIN docker-compose.prod.yml's POSTGRES_MEM_LIMIT (2G hard
+    # cgroup cap), not against the host's full 15GB -- shared_buffers=1GB
+    # plus a worst-case 3 concurrent autovacuum workers at
+    # maintenance_work_mem each (768MB) still leaves headroom under the 2GB
+    # ceiling instead of racing the OOM killer.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=1GB
+      - -c
+      - effective_cache_size=1536MB
+      - -c
+      - work_mem=48MB
+      - -c
+      - maintenance_work_mem=256MB
+      - -c
+      - max_wal_size=3GB
+      - -c
+      - wal_buffers=16MB
+      - -c
+      - max_connections=40
+      - -c
+      - random_page_cost=1.1
     volumes:
       - ./docker-data/postgres:/var/lib/postgresql/data
     healthcheck:
