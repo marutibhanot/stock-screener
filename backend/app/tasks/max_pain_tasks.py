@@ -553,9 +553,10 @@ def update_max_pain(self, config_path: str | None = None, wait_until: str | None
 
         # Chain into the GEX update regardless of this run's outcome, so a bad
         # Max Pain day doesn't stall the rest of the evening pipeline. Explicit
-        # queue routing is required here -- these tasks aren't in
-        # celery_app.py's default data_fetch task_routes map, so a plain
-        # .delay() would silently land on the general 'celery' queue.
+        # queue routing is kept here even though update_gex now has a
+        # celery_app.py task_routes backstop, since that default only saves
+        # a caller that forgets to pass queue= -- it's not a reason to
+        # start omitting it deliberately.
         if chain_next:
             try:
                 from .gex_tasks import update_gex
@@ -582,16 +583,12 @@ def schedule_daily_update():
     }
     """
     logger.info("Triggering scheduled max pain update")
-    # Explicit queue routing (not just .delay()) so the actual heavy,
-    # yfinance-hammering task lands on the single-concurrency data_fetch
-    # worker instead of the general compute queue. Routing the *wrapper*
-    # task (this function) to data_fetch_us -- via the beat entry's
-    # 'options': {'queue': ...} or SCHEDULED_TASKS' manual_dispatch_options
-    # -- does NOT propagate to update_max_pain: a plain .delay() call from
-    # inside a task dispatches on that task's own default route, not the
-    # caller's queue. update_max_pain isn't in celery_app.py's default
-    # task_routes map, so it was landing on the general 'celery' queue and
-    # tying up a general-compute worker for the full run -- exactly what
-    # the queue split was meant to prevent.
+    # Explicit queue routing (not just .delay()), kept even though
+    # update_max_pain now has a celery_app.py task_routes backstop -- routing
+    # the *wrapper* task (this function) to data_fetch_us -- via the beat
+    # entry's 'options': {'queue': ...} or SCHEDULED_TASKS'
+    # manual_dispatch_options -- does NOT propagate to update_max_pain: a
+    # plain .delay() call from inside a task dispatches on that task's own
+    # route, not the caller's queue.
     from .market_queues import data_fetch_queue_for_market
     update_max_pain.apply_async(queue=data_fetch_queue_for_market("US"))

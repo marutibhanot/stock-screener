@@ -421,10 +421,12 @@ def schedule_daily_update() -> dict:
     NOT cascade into the options update (chain_next=False).
     """
     logger.info("Triggering GEX update for full active universe (manual, standalone)")
-    # Explicit queue routing -- update_gex isn't in the default task_routes
-    # map, so a plain .delay() here would land it on the general compute
-    # queue instead of the single-concurrency data_fetch worker, same bug
-    # class as max_pain_tasks.schedule_daily_update (see its comment).
+    # Explicit queue routing, kept even though update_gex now has a
+    # celery_app.py task_routes backstop -- routing the wrapper task (this
+    # function) would NOT propagate to update_gex, since a plain .delay()
+    # from inside a task dispatches on that task's own route, not the
+    # caller's queue. Same bug class as max_pain_tasks.schedule_daily_update
+    # (see its comment).
     from .market_queues import data_fetch_queue_for_market
     task = update_gex.apply_async(kwargs={"chain_next": False}, queue=data_fetch_queue_for_market("US"))
     return {

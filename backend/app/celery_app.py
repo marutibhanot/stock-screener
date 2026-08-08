@@ -301,6 +301,21 @@ _MARKET_SCOPED_DATA_FETCH_TASKS = (
     'app.tasks.universe_tasks.refresh_sp500_membership',
 )
 
+# Options pipeline (Max Pain / GEX / structural exposure): all US-only,
+# yfinance-driven fetches. Every current call site (API trigger-update
+# endpoints, the max_pain->gex->options chain in each task's `finally` block,
+# task_registry_service's manual dispatch) already passes an explicit
+# queue=data_fetch_queue_for_market("US") to these, since routing the wrapper
+# scheduler tasks doesn't propagate to them (see comments in
+# max_pain_tasks.schedule_daily_update). This route entry is a backstop for
+# any future/forgotten dispatch that omits the explicit queue -- explicit
+# queue= on apply_async still takes precedence over this default.
+_OPTIONS_DATA_FETCH_TASKS = (
+    'app.tasks.max_pain_tasks.update_max_pain',
+    'app.tasks.gex_tasks.update_gex',
+    'app.tasks.options_analysis_tasks.analyze_options_exposure',
+)
+
 _MARKET_JOB_TASKS = (
     'app.tasks.industry_tasks.load_tracked_ibd_industry_groups',
     'app.tasks.industry_tasks.sync_ibd_classification',
@@ -332,6 +347,10 @@ celery_app.conf.task_routes = {
 celery_app.conf.task_routes.update({
     task_name: {'queue': market_jobs_queue_for_market("US")}
     for task_name in _MARKET_JOB_TASKS
+})
+celery_app.conf.task_routes.update({
+    task_name: {'queue': data_fetch_queue_for_market("US")}
+    for task_name in _OPTIONS_DATA_FETCH_TASKS
 })
 
 # User scans: same default-to-shared pattern; API layer sets the queue explicitly.
