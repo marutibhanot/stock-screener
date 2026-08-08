@@ -1,0 +1,58 @@
+/* Scoped Tailwind stylesheet for the Supply Chain Analysis (SPLC) page only.
+ *
+ * Same isolation trick as src/styles/commandCenter.css: preflight (Tailwind's
+ * base reset) is intentionally NOT imported, because it clobbers default
+ * element styling globally and every other page in this app renders through
+ * MUI's own CssBaseline. Only SupplyChainAnalysisPage imports this file.
+ */
+@import 'tailwindcss/theme.css';
+@import 'tailwindcss/utilities.css';
+
+/* Authentic Bloomberg-terminal amber-on-charcoal palette, exposed as
+ * Tailwind v4 theme tokens (`bg-splc-bg`, `text-splc-amber`, etc.) so the
+ * rest of the SPLC components can use ordinary utility classes instead of
+ * arbitrary hex values scattered through JSX. */
+@theme {
+  --color-splc-bg: #0f1218;
+  --color-splc-panel: #12151c;
+  --color-splc-panel-raised: #171b24;
+  --color-splc-border: #2a2f3a;
+  --color-splc-amber: #ff9900;
+  --color-splc-orange: #ff5500;
+  --color-splc-text: #e1e4ea;
+  --color-splc-muted: #6c727f;
+  /* Exposure-tier scale (see mockSupplyChainData.js's EXPOSURE_TIERS):
+     High (>15%) / Medium (5-15%) / Low (<5%) -- exact hex from the
+     dashboard's backend-integration spec's "Dynamic Line Colors" section.
+     Medium reuses the same amber as the brand accent; Low reuses the same
+     muted gray as secondary labels, by design (single source of truth
+     rather than near-duplicate tokens). */
+  --color-splc-high: #00c853;
+  --color-splc-medium: #ff9900;
+  --color-splc-low: #6c727f;
+  --color-splc-risk-high: #ff3d57;
+  --color-splc-risk-medium: #ffb300;
+  --color-splc-risk-low: #00c853;
+
+  --font-splc-mono: 'JetBrains Mono', 'Roboto Mono', 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-splc-sans: Inter, ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+/* Amber glow ring for the target node and the amber focus ring used on
+ * inputs -- kept as a real CSS class since Tailwind's arbitrary box-shadow
+ * syntax gets unreadable fast for a multi-layer glow. */
+.splc-target-glow {
+  filter: drop-shadow(0 0 6px rgba(255, 153, 0, 0.85)) drop-shadow(0 0 14px rgba(255, 85, 0, 0.35));
+}
+
+.splc-scrollbar::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.splc-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.splc-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #2a2f3a;
+  border-radius: 4px;
+}

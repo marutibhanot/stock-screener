@@ -141,6 +141,7 @@ The static shell under `src/static/` reads JSON bundles from `/static-data/*` an
 - Keep operational screens dense and scannable.
 - Prefer MUI icon buttons and compact controls over explanatory text.
 - Reuse existing table, chart, modal, and layout patterns before adding new primitives.
+- **Scoped Tailwind pages**: a few dense, data-heavy pages (Options Command Center, Supply Chain) use Tailwind utility classes instead of MUI. Each imports its own `src/styles/<page>.css` (`@import 'tailwindcss/theme.css'; @import 'tailwindcss/utilities.css';` — **no preflight import**, since Tailwind's base reset would break every MUI page's `CssBaseline` styling globally). `vite.config.js`'s `tailwindcss()` plugin only processes files that import a Tailwind stylesheet, so this has zero effect elsewhere. Follow this pattern (see `styles/commandCenter.css` or `styles/supplyChain.css`) rather than adding Tailwind classes to an MUI page directly.
 
 ## Testing
 

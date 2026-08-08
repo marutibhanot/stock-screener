@@ -108,6 +108,7 @@ Optional web-search keys (`TAVILY_API_KEY`, `SERPER_API_KEY`) enable the chatbot
 | [Architecture](docs/ARCHITECTURE.md) | Understanding the system design |
 | [Environment Variables](docs/ENVIRONMENT.md) | Configuration reference |
 | [MCP Integration](docs/MCP_INTEGRATION.md) | AI copilot workflows (12 tools via stdio / Streamable HTTP) |
+| [Supply Chain Dashboard](docs/SUPPLY_CHAIN_DASHBOARD.md) | Frontend developers — `/supply-chain` SPLC-style dashboard |
 | [Backend API & Architecture](backend/README.md) | Backend developers |
 | [Frontend Components](frontend/README.md) | Frontend developers |
 | [Contributing](CONTRIBUTING.md) | Getting started as a contributor |
