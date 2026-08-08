@@ -305,16 +305,29 @@ def _compute_forward_returns(
     if not lookup_pairs:
         return []
 
-    price_rows = (
-        db.query(StockPrice.symbol, StockPrice.date, StockPrice.close)
-        .filter(tuple_(StockPrice.symbol, StockPrice.date).in_(list(lookup_pairs)))
-        .all()
-    )
-    close_by_pair: dict[tuple[str, date], float] = {
-        (symbol, price_date): close
-        for symbol, price_date, close in price_rows
-        if close is not None
-    }
+    # Batched, not one IN ((sym, date), (sym, date), ...) for the whole set --
+    # with years of backfilled history, a well-matched ticker (e.g. one with
+    # a long iv_hv_spread candidate history) can produce thousands of pairs
+    # here, and Postgres's SQL parser has hit "stack depth limit exceeded"
+    # rendering an IN-list that long. Chunking keeps each query's parse
+    # depth bounded regardless of how many candidates matched.
+    _LOOKUP_BATCH_SIZE = 500
+    lookup_list = list(lookup_pairs)
+    close_by_pair: dict[tuple[str, date], float] = {}
+    for i in range(0, len(lookup_list), _LOOKUP_BATCH_SIZE):
+        batch = lookup_list[i : i + _LOOKUP_BATCH_SIZE]
+        price_rows = (
+            db.query(StockPrice.symbol, StockPrice.date, StockPrice.close)
+            .filter(tuple_(StockPrice.symbol, StockPrice.date).in_(batch))
+            .all()
+        )
+        close_by_pair.update(
+            {
+                (symbol, price_date): close
+                for symbol, price_date, close in price_rows
+                if close is not None
+            }
+        )
 
     returns: list[float] = []
     for (sym, start_date), end_date in end_date_by_start.items():
